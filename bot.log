@@ -1,0 +1,266 @@
+2026-06-29 14:31:56,534 [WARNING ] PyNaCl is not installed, voice will NOT be supported
+2026-06-29 14:31:56,534 [WARNING ] davey is not installed, voice will NOT be supported
+[2026-06-29 14:31:56] [INFO    ] discord.client: logging in using static token
+2026-06-29 14:31:56,538 [INFO    ] logging in using static token
+2026-06-29 14:31:57,499 [INFO    ] Connecting to MongoDB...
+2026-06-29 14:32:01,531 [INFO    ] MongoDB connected
+2026-06-29 14:32:02,077 [INFO    ] Synced 10 slash commands
+[2026-06-29 14:32:03] [INFO    ] discord.gateway: Shard ID None has connected to Gateway (Session ID: 1d397c8f03ce1e15ec911a89e0bce307).
+2026-06-29 14:32:03,298 [INFO    ] Shard ID None has connected to Gateway (Session ID: 1d397c8f03ce1e15ec911a89e0bce307).
+2026-06-29 14:32:05,310 [INFO    ] Logged in as Innocent Doraemon#8412 (1519688409868669088) on 1 guilds
+[2026-06-29 14:36:34] [ERROR   ] discord.app_commands.tree: Ignoring exception in command 'buy'
+Traceback (most recent call last):
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/discord/app_commands/commands.py", line 858, in _do_call
+    return await self._callback(self.binding, interaction, **params)  # type: ignore
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/botverse/innocentdora/cogs/shop.py", line 77, in buy
+    await db.add_to_inventory(interaction.guild.id, interaction.user.id, item, quantity)
+  File "/root/botverse/innocentdora/database.py", line 186, in add_to_inventory
+    await self.users.update_one(
+    ...<3 lines>...
+    )
+  File "/root/botverse/innocentdora/database.py", line 51, in update_one
+    return await asyncio.to_thread(self._col.update_one, filter, update)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/data/com.termux/files/usr/lib/python3.13/asyncio/threads.py", line 25, in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/data/com.termux/files/usr/lib/python3.13/concurrent/futures/thread.py", line 59, in run
+    result = self.fn(*self.args, **self.kwargs)
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/mongita/common.py", line 72, in inner
+    return func(*args, **kwargs)
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/mongita/collection.py", line 1033, in update_one
+    doc = self.__update_doc(doc_ids[0], update)
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/mongita/collection.py", line 1004, in __update_doc
+    _update_item_in_doc(update_op, update_op_dict, doc)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/mongita/collection.py", line 371, in _update_item_in_doc
+    raise _failed_update_error(update_op, update_op_dict, doc,
+                               "Document value was not numeric")
+mongita.errors.MongitaError: Cannot apply operation {'$inc': {'inventory.silence_2min': 1}} to {'_id': ObjectId('6a409d474558a2e7a3480b2b'), 'guild_id': 1458457045777776858, 'user_id': 1472113947531542610, 'balance': 400, 'inventory': {}, 'total_jailed': 3, 'total_jails_done': 0} (Document value was not numeric)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/discord/app_commands/tree.py", line 1302, in _call
+    await command._invoke_with_namespace(interaction, namespace)
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/discord/app_commands/commands.py", line 884, in _invoke_with_namespace
+    return await self._do_call(interaction, transformed_values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/discord/app_commands/commands.py", line 877, in _do_call
+    raise CommandInvokeError(self, e) from e
+discord.app_commands.errors.CommandInvokeError: Command 'buy' raised an exception: MongitaError: Cannot apply operation {'$inc': {'inventory.silence_2min': 1}} to {'_id': ObjectId('6a409d474558a2e7a3480b2b'), 'guild_id': 1458457045777776858, 'user_id': 1472113947531542610, 'balance': 400, 'inventory': {}, 'total_jailed': 3, 'total_jails_done': 0} (Document value was not numeric)
+2026-06-29 14:36:34,849 [ERROR   ] Ignoring exception in command 'buy'
+Traceback (most recent call last):
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/discord/app_commands/commands.py", line 858, in _do_call
+    return await self._callback(self.binding, interaction, **params)  # type: ignore
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/botverse/innocentdora/cogs/shop.py", line 77, in buy
+    await db.add_to_inventory(interaction.guild.id, interaction.user.id, item, quantity)
+  File "/root/botverse/innocentdora/database.py", line 186, in add_to_inventory
+    await self.users.update_one(
+    ...<3 lines>...
+    )
+  File "/root/botverse/innocentdora/database.py", line 51, in update_one
+    return await asyncio.to_thread(self._col.update_one, filter, update)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/data/com.termux/files/usr/lib/python3.13/asyncio/threads.py", line 25, in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/data/com.termux/files/usr/lib/python3.13/concurrent/futures/thread.py", line 59, in run
+    result = self.fn(*self.args, **self.kwargs)
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/mongita/common.py", line 72, in inner
+    return func(*args, **kwargs)
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/mongita/collection.py", line 1033, in update_one
+    doc = self.__update_doc(doc_ids[0], update)
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/mongita/collection.py", line 1004, in __update_doc
+    _update_item_in_doc(update_op, update_op_dict, doc)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/mongita/collection.py", line 371, in _update_item_in_doc
+    raise _failed_update_error(update_op, update_op_dict, doc,
+                               "Document value was not numeric")
+mongita.errors.MongitaError: Cannot apply operation {'$inc': {'inventory.silence_2min': 1}} to {'_id': ObjectId('6a409d474558a2e7a3480b2b'), 'guild_id': 1458457045777776858, 'user_id': 1472113947531542610, 'balance': 400, 'inventory': {}, 'total_jailed': 3, 'total_jails_done': 0} (Document value was not numeric)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/discord/app_commands/tree.py", line 1302, in _call
+    await command._invoke_with_namespace(interaction, namespace)
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/discord/app_commands/commands.py", line 884, in _invoke_with_namespace
+    return await self._do_call(interaction, transformed_values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/discord/app_commands/commands.py", line 877, in _do_call
+    raise CommandInvokeError(self, e) from e
+discord.app_commands.errors.CommandInvokeError: Command 'buy' raised an exception: MongitaError: Cannot apply operation {'$inc': {'inventory.silence_2min': 1}} to {'_id': ObjectId('6a409d474558a2e7a3480b2b'), 'guild_id': 1458457045777776858, 'user_id': 1472113947531542610, 'balance': 400, 'inventory': {}, 'total_jailed': 3, 'total_jails_done': 0} (Document value was not numeric)
+[2026-06-29 14:41:17] [ERROR   ] discord.app_commands.tree: Ignoring exception in command 'buy'
+Traceback (most recent call last):
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/discord/app_commands/commands.py", line 858, in _do_call
+    return await self._callback(self.binding, interaction, **params)  # type: ignore
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/botverse/innocentdora/cogs/shop.py", line 77, in buy
+    await db.add_to_inventory(interaction.guild.id, interaction.user.id, item, quantity)
+  File "/root/botverse/innocentdora/database.py", line 186, in add_to_inventory
+    await self.users.update_one(
+    ...<3 lines>...
+    )
+  File "/root/botverse/innocentdora/database.py", line 51, in update_one
+    return await asyncio.to_thread(self._col.update_one, filter, update)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/data/com.termux/files/usr/lib/python3.13/asyncio/threads.py", line 25, in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/data/com.termux/files/usr/lib/python3.13/concurrent/futures/thread.py", line 59, in run
+    result = self.fn(*self.args, **self.kwargs)
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/mongita/common.py", line 72, in inner
+    return func(*args, **kwargs)
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/mongita/collection.py", line 1033, in update_one
+    doc = self.__update_doc(doc_ids[0], update)
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/mongita/collection.py", line 1004, in __update_doc
+    _update_item_in_doc(update_op, update_op_dict, doc)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/mongita/collection.py", line 371, in _update_item_in_doc
+    raise _failed_update_error(update_op, update_op_dict, doc,
+                               "Document value was not numeric")
+mongita.errors.MongitaError: Cannot apply operation {'$inc': {'inventory.silence_2min': 1}} to {'_id': ObjectId('6a409d474558a2e7a3480b2b'), 'guild_id': 1458457045777776858, 'user_id': 1472113947531542610, 'balance': 300, 'inventory': {}, 'total_jailed': 3, 'total_jails_done': 0} (Document value was not numeric)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/discord/app_commands/tree.py", line 1302, in _call
+    await command._invoke_with_namespace(interaction, namespace)
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/discord/app_commands/commands.py", line 884, in _invoke_with_namespace
+    return await self._do_call(interaction, transformed_values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/discord/app_commands/commands.py", line 877, in _do_call
+    raise CommandInvokeError(self, e) from e
+discord.app_commands.errors.CommandInvokeError: Command 'buy' raised an exception: MongitaError: Cannot apply operation {'$inc': {'inventory.silence_2min': 1}} to {'_id': ObjectId('6a409d474558a2e7a3480b2b'), 'guild_id': 1458457045777776858, 'user_id': 1472113947531542610, 'balance': 300, 'inventory': {}, 'total_jailed': 3, 'total_jails_done': 0} (Document value was not numeric)
+2026-06-29 14:41:17,101 [ERROR   ] Ignoring exception in command 'buy'
+Traceback (most recent call last):
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/discord/app_commands/commands.py", line 858, in _do_call
+    return await self._callback(self.binding, interaction, **params)  # type: ignore
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/botverse/innocentdora/cogs/shop.py", line 77, in buy
+    await db.add_to_inventory(interaction.guild.id, interaction.user.id, item, quantity)
+  File "/root/botverse/innocentdora/database.py", line 186, in add_to_inventory
+    await self.users.update_one(
+    ...<3 lines>...
+    )
+  File "/root/botverse/innocentdora/database.py", line 51, in update_one
+    return await asyncio.to_thread(self._col.update_one, filter, update)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/data/com.termux/files/usr/lib/python3.13/asyncio/threads.py", line 25, in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/data/com.termux/files/usr/lib/python3.13/concurrent/futures/thread.py", line 59, in run
+    result = self.fn(*self.args, **self.kwargs)
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/mongita/common.py", line 72, in inner
+    return func(*args, **kwargs)
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/mongita/collection.py", line 1033, in update_one
+    doc = self.__update_doc(doc_ids[0], update)
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/mongita/collection.py", line 1004, in __update_doc
+    _update_item_in_doc(update_op, update_op_dict, doc)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/mongita/collection.py", line 371, in _update_item_in_doc
+    raise _failed_update_error(update_op, update_op_dict, doc,
+                               "Document value was not numeric")
+mongita.errors.MongitaError: Cannot apply operation {'$inc': {'inventory.silence_2min': 1}} to {'_id': ObjectId('6a409d474558a2e7a3480b2b'), 'guild_id': 1458457045777776858, 'user_id': 1472113947531542610, 'balance': 300, 'inventory': {}, 'total_jailed': 3, 'total_jails_done': 0} (Document value was not numeric)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/discord/app_commands/tree.py", line 1302, in _call
+    await command._invoke_with_namespace(interaction, namespace)
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/discord/app_commands/commands.py", line 884, in _invoke_with_namespace
+    return await self._do_call(interaction, transformed_values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/discord/app_commands/commands.py", line 877, in _do_call
+    raise CommandInvokeError(self, e) from e
+discord.app_commands.errors.CommandInvokeError: Command 'buy' raised an exception: MongitaError: Cannot apply operation {'$inc': {'inventory.silence_2min': 1}} to {'_id': ObjectId('6a409d474558a2e7a3480b2b'), 'guild_id': 1458457045777776858, 'user_id': 1472113947531542610, 'balance': 300, 'inventory': {}, 'total_jailed': 3, 'total_jails_done': 0} (Document value was not numeric)
+[2026-06-29 15:11:17] [ERROR   ] discord.app_commands.tree: Ignoring exception in command 'buy'
+Traceback (most recent call last):
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/discord/app_commands/commands.py", line 858, in _do_call
+    return await self._callback(self.binding, interaction, **params)  # type: ignore
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/botverse/innocentdora/cogs/shop.py", line 77, in buy
+    await db.add_to_inventory(interaction.guild.id, interaction.user.id, item, quantity)
+  File "/root/botverse/innocentdora/database.py", line 186, in add_to_inventory
+    await self.users.update_one(
+    ...<3 lines>...
+    )
+  File "/root/botverse/innocentdora/database.py", line 51, in update_one
+    return await asyncio.to_thread(self._col.update_one, filter, update)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/data/com.termux/files/usr/lib/python3.13/asyncio/threads.py", line 25, in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/data/com.termux/files/usr/lib/python3.13/concurrent/futures/thread.py", line 59, in run
+    result = self.fn(*self.args, **self.kwargs)
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/mongita/common.py", line 72, in inner
+    return func(*args, **kwargs)
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/mongita/collection.py", line 1033, in update_one
+    doc = self.__update_doc(doc_ids[0], update)
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/mongita/collection.py", line 1004, in __update_doc
+    _update_item_in_doc(update_op, update_op_dict, doc)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/mongita/collection.py", line 371, in _update_item_in_doc
+    raise _failed_update_error(update_op, update_op_dict, doc,
+                               "Document value was not numeric")
+mongita.errors.MongitaError: Cannot apply operation {'$inc': {'inventory.silence_2min': 1}} to {'_id': ObjectId('6a409d474558a2e7a3480b2b'), 'guild_id': 1458457045777776858, 'user_id': 1472113947531542610, 'balance': 200, 'inventory': {}, 'total_jailed': 3, 'total_jails_done': 0} (Document value was not numeric)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/discord/app_commands/tree.py", line 1302, in _call
+    await command._invoke_with_namespace(interaction, namespace)
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/discord/app_commands/commands.py", line 884, in _invoke_with_namespace
+    return await self._do_call(interaction, transformed_values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/discord/app_commands/commands.py", line 877, in _do_call
+    raise CommandInvokeError(self, e) from e
+discord.app_commands.errors.CommandInvokeError: Command 'buy' raised an exception: MongitaError: Cannot apply operation {'$inc': {'inventory.silence_2min': 1}} to {'_id': ObjectId('6a409d474558a2e7a3480b2b'), 'guild_id': 1458457045777776858, 'user_id': 1472113947531542610, 'balance': 200, 'inventory': {}, 'total_jailed': 3, 'total_jails_done': 0} (Document value was not numeric)
+2026-06-29 15:11:17,707 [ERROR   ] Ignoring exception in command 'buy'
+Traceback (most recent call last):
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/discord/app_commands/commands.py", line 858, in _do_call
+    return await self._callback(self.binding, interaction, **params)  # type: ignore
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/botverse/innocentdora/cogs/shop.py", line 77, in buy
+    await db.add_to_inventory(interaction.guild.id, interaction.user.id, item, quantity)
+  File "/root/botverse/innocentdora/database.py", line 186, in add_to_inventory
+    await self.users.update_one(
+    ...<3 lines>...
+    )
+  File "/root/botverse/innocentdora/database.py", line 51, in update_one
+    return await asyncio.to_thread(self._col.update_one, filter, update)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/data/com.termux/files/usr/lib/python3.13/asyncio/threads.py", line 25, in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/data/com.termux/files/usr/lib/python3.13/concurrent/futures/thread.py", line 59, in run
+    result = self.fn(*self.args, **self.kwargs)
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/mongita/common.py", line 72, in inner
+    return func(*args, **kwargs)
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/mongita/collection.py", line 1033, in update_one
+    doc = self.__update_doc(doc_ids[0], update)
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/mongita/collection.py", line 1004, in __update_doc
+    _update_item_in_doc(update_op, update_op_dict, doc)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/mongita/collection.py", line 371, in _update_item_in_doc
+    raise _failed_update_error(update_op, update_op_dict, doc,
+                               "Document value was not numeric")
+mongita.errors.MongitaError: Cannot apply operation {'$inc': {'inventory.silence_2min': 1}} to {'_id': ObjectId('6a409d474558a2e7a3480b2b'), 'guild_id': 1458457045777776858, 'user_id': 1472113947531542610, 'balance': 200, 'inventory': {}, 'total_jailed': 3, 'total_jails_done': 0} (Document value was not numeric)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/discord/app_commands/tree.py", line 1302, in _call
+    await command._invoke_with_namespace(interaction, namespace)
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/discord/app_commands/commands.py", line 884, in _invoke_with_namespace
+    return await self._do_call(interaction, transformed_values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/data/com.termux/files/usr/lib/python3.13/site-packages/discord/app_commands/commands.py", line 877, in _do_call
+    raise CommandInvokeError(self, e) from e
+discord.app_commands.errors.CommandInvokeError: Command 'buy' raised an exception: MongitaError: Cannot apply operation {'$inc': {'inventory.silence_2min': 1}} to {'_id': ObjectId('6a409d474558a2e7a3480b2b'), 'guild_id': 1458457045777776858, 'user_id': 1472113947531542610, 'balance': 200, 'inventory': {}, 'total_jailed': 3, 'total_jails_done': 0} (Document value was not numeric)
+[2026-06-29 16:06:47] [INFO    ] discord.gateway: Shard ID None has successfully RESUMED session 1d397c8f03ce1e15ec911a89e0bce307.
+2026-06-29 16:06:47,348 [INFO    ] Shard ID None has successfully RESUMED session 1d397c8f03ce1e15ec911a89e0bce307.
+[2026-06-29 17:07:26] [INFO    ] discord.gateway: Shard ID None has successfully RESUMED session 1d397c8f03ce1e15ec911a89e0bce307.
+2026-06-29 17:07:26,408 [INFO    ] Shard ID None has successfully RESUMED session 1d397c8f03ce1e15ec911a89e0bce307.
