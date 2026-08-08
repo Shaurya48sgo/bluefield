@@ -29,13 +29,13 @@ class SetupFlow(discord.ui.View):
 
     async def interaction_check(self, interaction):
         if interaction.user.id != self.author.id:
-            await interaction.response.send_message("Only the admin who started this can set it up.", ephemeral=True)
+            await interaction.response.send_message("Only the admin who started this can set it up.")
             return False
         return True
 
     async def _wait_input(self, interaction, prompt):
         if self.busy:
-            await interaction.response.send_message("Finish the current prompt first.", ephemeral=True)
+            await interaction.response.send_message("Finish the current prompt first.")
             return None
         self.busy = True
         await interaction.response.send_message(prompt)
@@ -47,7 +47,7 @@ class SetupFlow(discord.ui.View):
             )
         except asyncio.TimeoutError:
             self.busy = False
-            await interaction.followup.send("Timed out.", ephemeral=True)
+            await interaction.followup.send("Timed out.")
             return None
         self.busy = False
         try:
@@ -65,11 +65,11 @@ class SetupFlow(discord.ui.View):
             return
         channel = interaction.guild.get_channel(_parse_channel(value))
         if channel is None:
-            await interaction.followup.send("No valid channel — leaving it unchanged.", ephemeral=True)
+            await interaction.followup.send("No valid channel — leaving it unchanged.")
             return
         set_guild_settings(self.guild_id, activity_log_channel_id=channel.id)
         audit(self.guild_id, interaction.user.id, "settings", "guild", self.guild_id, f"activity channel -> #{channel.name}")
-        await interaction.followup.send(f"✅ Activity log channel set to {channel.mention}.", ephemeral=True)
+        await interaction.followup.send(f"✅ Activity log channel set to {channel.mention}.")
 
     @discord.ui.button(label="Member log channel", style=discord.ButtonStyle.secondary)
     async def member_button(self, interaction, button):
@@ -80,11 +80,11 @@ class SetupFlow(discord.ui.View):
             return
         channel = interaction.guild.get_channel(_parse_channel(value))
         if channel is None:
-            await interaction.followup.send("No valid channel — leaving it unchanged.", ephemeral=True)
+            await interaction.followup.send("No valid channel — leaving it unchanged.")
             return
         set_guild_settings(self.guild_id, member_log_channel_id=channel.id)
         audit(self.guild_id, interaction.user.id, "settings", "guild", self.guild_id, f"member channel -> #{channel.name}")
-        await interaction.followup.send(f"✅ Member log channel set to {channel.mention}.", ephemeral=True)
+        await interaction.followup.send(f"✅ Member log channel set to {channel.mention}.")
 
     @discord.ui.button(label="Max groups per member", style=discord.ButtonStyle.secondary)
     async def limit_button(self, interaction, button):
@@ -94,16 +94,16 @@ class SetupFlow(discord.ui.View):
         if value is None:
             return
         if value.lower() == "skip":
-            await interaction.followup.send("Left unchanged.", ephemeral=True)
+            await interaction.followup.send("Left unchanged.")
             return
         try:
             limit = max(1, int(value))
         except ValueError:
-            await interaction.followup.send("That's not a number — leaving it unchanged.", ephemeral=True)
+            await interaction.followup.send("That's not a number — leaving it unchanged.")
             return
         set_guild_settings(self.guild_id, max_groups_per_member=limit)
         audit(self.guild_id, interaction.user.id, "settings", "guild", self.guild_id, f"max groups -> {limit}")
-        await interaction.followup.send(f"✅ Max groups per member set to **{limit}**.", ephemeral=True)
+        await interaction.followup.send(f"✅ Max groups per member set to **{limit}**.")
 
     @discord.ui.button(label="Done", style=discord.ButtonStyle.success)
     async def done_button(self, interaction, button):
@@ -112,7 +112,7 @@ class SetupFlow(discord.ui.View):
         embed.add_field(name="Activity log channel", value=f"<#{settings.get('activity_log_channel_id')}>" if settings.get("activity_log_channel_id") else "Not set")
         embed.add_field(name="Member log channel", value=f"<#{settings.get('member_log_channel_id')}>" if settings.get("member_log_channel_id") else "Not set")
         embed.add_field(name="Max groups per member", value=str(settings.get("max_groups_per_member", 3)))
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_message(embed=embed)
 
 
 def _parse_channel(value):
@@ -132,7 +132,7 @@ class HelpView(discord.ui.View):
 
     async def interaction_check(self, interaction):
         if interaction.user.id != self.author.id:
-            await interaction.response.send_message("Not your help menu.", ephemeral=True)
+            await interaction.response.send_message("Not your help menu.")
             return False
         return True
 

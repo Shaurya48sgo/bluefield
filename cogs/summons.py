@@ -40,7 +40,7 @@ class MembersButton(discord.ui.View):
     async def members_button(self, interaction, button):
         doc = S.find_one({"_id": ObjectId(self.summon_id), "guild_id": self.guild_id})
         if not doc:
-            await interaction.response.send_message("This summon no longer exists.", ephemeral=True)
+            await interaction.response.send_message("This summon no longer exists.")
             return
         guild = self.cog.bot.get_guild(self.guild_id)
         embed = discord.Embed(
@@ -54,7 +54,7 @@ class MembersButton(discord.ui.View):
             names.append(m.mention if m else _mention(uid))
         embed.description = (" ".join(names)) if names else "No members yet."
         embed.set_footer(text=f"{len(member_ids)} members")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_message(embed=embed)
 
 
 class RenameModal(discord.ui.Modal):
@@ -69,11 +69,11 @@ class RenameModal(discord.ui.Modal):
     async def on_submit(self, interaction):
         name = self.name_input.value.strip()
         if not name:
-            await interaction.response.send_message("Name cannot be empty.", ephemeral=True)
+            await interaction.response.send_message("Name cannot be empty.")
             return
         if await self.cog._name_taken(self.guild_id, name, exclude=self.summon_id):
             await interaction.response.send_message(
-                "A summon with that name already exists. Choose a different name.", ephemeral=True
+                "A summon with that name already exists. Choose a different name."
             )
             return
         S.update_one({"_id": ObjectId(self.summon_id)}, {"$set": {"name": name}})
@@ -86,7 +86,7 @@ class RenameModal(discord.ui.Modal):
                 except Exception:
                     pass
         audit(self.guild_id, interaction.user.id, "rename", "summon", self.summon_id, f"renamed to {name}")
-        await interaction.response.send_message(f"✅ Renamed to **{name}**!", ephemeral=True)
+        await interaction.response.send_message(f"✅ Renamed to **{name}**!")
         await self.cog.refresh_member_embed(interaction.guild, S.find_one({"_id": ObjectId(self.summon_id)}))
         await self.cog._edit_refresh(interaction, self.summon_id)
 
@@ -147,13 +147,13 @@ class EditSummonView(discord.ui.View):
     async def interaction_check(self, interaction):
         doc = S.find_one({"_id": ObjectId(self.summon_id), "guild_id": self.guild_id})
         if not doc:
-            await interaction.response.send_message("This summon no longer exists.", ephemeral=True)
+            await interaction.response.send_message("This summon no longer exists.")
             return False
         uid = interaction.user.id
         allowed = is_admin(interaction.user) or doc.get("creator_id") == uid or uid in doc.get("co_owner_ids", [])
         if not allowed:
             await interaction.response.send_message(
-                "Only the owner, co-owners, and admins can edit this.", ephemeral=True
+                "Only the owner, co-owners, and admins can edit this."
             )
             return False
         return True
@@ -187,20 +187,20 @@ class DeleteConfirmView(discord.ui.View):
 
     async def interaction_check(self, interaction):
         if interaction.user.id != self.author.id:
-            await interaction.response.send_message("Only the requester can confirm this.", ephemeral=True)
+            await interaction.response.send_message("Only the requester can confirm this.")
             return False
         return True
 
     async def _remove(self, interaction):
         doc = S.find_one({"_id": self.summon["_id"]})
         if not doc:
-            await interaction.response.send_message("This summon no longer exists.", ephemeral=True)
+            await interaction.response.send_message("This summon no longer exists.")
             return
         embed_id = doc.get("member_embed_id")
         try:
             S.delete_one({"_id": self.summon["_id"]})
         except Exception as e:
-            await interaction.response.send_message(f"Failed to remove from MongoDB: {e}", ephemeral=True)
+            await interaction.response.send_message(f"Failed to remove from MongoDB: {e}")
             return
         msg = f"🗑️ Deleted summon **{self.summon.get('name')}**."
         if doc.get("real_role_id"):
@@ -221,7 +221,7 @@ class DeleteConfirmView(discord.ui.View):
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
     async def no_button(self, interaction, button):
-        await interaction.response.send_message("Deletion cancelled.", ephemeral=True)
+        await interaction.response.send_message("Deletion cancelled.")
 
 
 class SummonsCog(commands.Cog):
@@ -425,11 +425,11 @@ class SummonsCog(commands.Cog):
                 timeout=120,
             )
         except asyncio.TimeoutError:
-            await interaction.followup.send("Timed out. Click the button again.", ephemeral=True)
+            await interaction.followup.send("Timed out. Click the button again.")
             return
         ids, types = parse_mentions(msg.guild, msg.content)
         if not ids:
-            await interaction.followup.send("No valid mentions found.", ephemeral=True)
+            await interaction.followup.send("No valid mentions found.")
             return
         try:
             if remove:
@@ -456,14 +456,14 @@ class SummonsCog(commands.Cog):
                     {"$set": {field_ids: cur_ids, field_types: cur_types}},
                 )
         except Exception as e:
-            await interaction.followup.send(f"Failed to save: {e}", ephemeral=True)
+            await interaction.followup.send(f"Failed to save: {e}")
             return
         try:
             await msg.delete()
         except discord.HTTPException:
             pass
         audit(guild_id, interaction.user.id, "edit", "summon", summon_id, f"{verb} {len(ids)} {what}ers")
-        await interaction.followup.send(f"✅ {verb.title()} {len(ids)} {what}ers.", ephemeral=True)
+        await interaction.followup.send(f"✅ {verb.title()} {len(ids)} {what}ers.")
         await self._edit_refresh(interaction, summon_id)
 
     # ---------- autocomplete ----------
@@ -512,12 +512,12 @@ class SummonsCog(commands.Cog):
         if not doc:
             real_role = _resolve_real_role(interaction.guild, summon)
             if real_role is None:
-                await interaction.response.send_message("That summon doesn't exist.", ephemeral=True)
+                await interaction.response.send_message("That summon doesn't exist.")
                 return
         member = interaction.user
         if is_blacklisted(interaction.guild.id, member.id, member):
             await interaction.response.send_message(
-                "You are blacklisted from summon commands.", ephemeral=True
+                "You are blacklisted from summon commands."
             )
             return
         if not is_admin(member):
@@ -526,7 +526,6 @@ class SummonsCog(commands.Cog):
             if now - last < SUMMON_COOLDOWN:
                 await interaction.response.send_message(
                     f"⏳ Please wait {int(SUMMON_COOLDOWN - (now - last))}s before summoning again.",
-                    ephemeral=True,
                 )
                 return
             if doc:
@@ -535,7 +534,7 @@ class SummonsCog(commands.Cog):
                 allowed = self._can_summon_real(member, real_role)
             if not allowed:
                 await interaction.response.send_message(
-                    "You are not allowed to summon this.", ephemeral=True
+                    "You are not allowed to summon this."
                 )
                 return
             self.last_summon[member.id] = now
@@ -605,16 +604,16 @@ class SummonsCog(commands.Cog):
         member = interaction.user
         if is_blacklisted(interaction.guild.id, member.id, member):
             await interaction.response.send_message(
-                "You are blacklisted from summon commands.", ephemeral=True
+                "You are blacklisted from summon commands."
             )
             return
         name = name.strip()
         if not name:
-            await interaction.response.send_message("Name cannot be empty.", ephemeral=True)
+            await interaction.response.send_message("Name cannot be empty.")
             return
         if self._name_taken(interaction.guild.id, name):
             await interaction.response.send_message(
-                "A summon with that name already exists.", ephemeral=True
+                "A summon with that name already exists."
             )
             return
         if not is_admin(member):
@@ -622,7 +621,6 @@ class SummonsCog(commands.Cog):
             if self._count_created(interaction.guild.id, member.id) >= limit:
                 await interaction.response.send_message(
                     f"You've reached the limit of **{limit}** summons. Admins can create more.",
-                    ephemeral=True,
                 )
                 return
         doc = {
@@ -648,13 +646,12 @@ class SummonsCog(commands.Cog):
         try:
             res = S.insert_one(doc)
         except Exception as e:
-            await interaction.response.send_message(f"Failed to save to MongoDB: {e}", ephemeral=True)
+            await interaction.response.send_message(f"Failed to save to MongoDB: {e}")
             return
         audit(interaction.guild.id, member.id, "create", "summon", str(res.inserted_id), doc["name"])
         await interaction.response.send_message(
             f"✅ Created summon **{doc['name']}**! You're the owner. "
             f"Use `/servercard` to view it or `/invite_to` to add people.",
-            ephemeral=True,
         )
         await self.refresh_member_embed(interaction.guild, doc)
 
@@ -665,11 +662,11 @@ class SummonsCog(commands.Cog):
         """Edit a summon's settings."""
         doc = self._resolve(interaction.guild.id, summon)
         if not doc:
-            await interaction.response.send_message("That summon doesn't exist.", ephemeral=True)
+            await interaction.response.send_message("That summon doesn't exist.")
             return
         if not self._can_manage(interaction.user, doc) and interaction.user.id not in doc.get("co_owner_ids", []):
             await interaction.response.send_message(
-                "Only the owner, co-owners, and admins can edit this.", ephemeral=True
+                "Only the owner, co-owners, and admins can edit this."
             )
             return
         await interaction.response.send_message(
@@ -684,11 +681,11 @@ class SummonsCog(commands.Cog):
         """Delete a summon."""
         doc = self._resolve(interaction.guild.id, summon)
         if not doc:
-            await interaction.response.send_message("That summon doesn't exist.", ephemeral=True)
+            await interaction.response.send_message("That summon doesn't exist.")
             return
         if not self._can_manage(interaction.user, doc):
             await interaction.response.send_message(
-                "Only the owner and admins can delete this.", ephemeral=True
+                "Only the owner and admins can delete this."
             )
             return
         if is_admin(interaction.user):
@@ -700,7 +697,7 @@ class SummonsCog(commands.Cog):
             try:
                 S.delete_one({"_id": doc["_id"]})
             except Exception as e:
-                await interaction.response.send_message(f"Failed to delete: {e}", ephemeral=True)
+                await interaction.response.send_message(f"Failed to delete: {e}")
                 return
             msg = f"🗑️ Deleted summon **{doc['name']}**."
             if doc.get("real_role_id"):
@@ -724,19 +721,19 @@ class SummonsCog(commands.Cog):
         """Join a summon."""
         doc = self._resolve(interaction.guild.id, summon)
         if not doc:
-            await interaction.response.send_message("That summon doesn't exist.", ephemeral=True)
+            await interaction.response.send_message("That summon doesn't exist.")
             return
         member = interaction.user
         if member.id in doc.get("banned", []):
-            await interaction.response.send_message("You're banned from this summon.", ephemeral=True)
+            await interaction.response.send_message("You're banned from this summon.")
             return
         if member.id in doc.get("members", []):
-            await interaction.response.send_message("You're already in this summon.", ephemeral=True)
+            await interaction.response.send_message("You're already in this summon.")
             return
         if doc.get("canjoin") == "invited":
             if member.id not in doc.get("join_ids", []):
                 await interaction.response.send_message(
-                    "This summon is invite-only.", ephemeral=True
+                    "This summon is invite-only."
                 )
                 return
         S.update_one({"_id": doc["_id"]}, {"$addToSet": {"members": member.id}})
@@ -749,7 +746,7 @@ class SummonsCog(commands.Cog):
                 except Exception:
                     pass
         audit(interaction.guild.id, member.id, "join", "summon", str(doc["_id"]), doc["name"])
-        await interaction.response.send_message(f"✅ Joined **{doc['name']}**!", ephemeral=True)
+        await interaction.response.send_message(f"✅ Joined **{doc['name']}**!")
         await self.refresh_member_embed(interaction.guild, doc)
 
     @app_commands.command(name="leave")
@@ -759,11 +756,11 @@ class SummonsCog(commands.Cog):
         """Leave a summon."""
         doc = self._resolve(interaction.guild.id, summon)
         if not doc:
-            await interaction.response.send_message("That summon doesn't exist.", ephemeral=True)
+            await interaction.response.send_message("That summon doesn't exist.")
             return
         member = interaction.user
         if member.id not in doc.get("members", []):
-            await interaction.response.send_message("You're not in this summon.", ephemeral=True)
+            await interaction.response.send_message("You're not in this summon.")
             return
         S.update_one({"_id": doc["_id"]}, {"$pull": {"members": member.id}})
         doc = S.find_one({"_id": doc["_id"]})
@@ -775,7 +772,7 @@ class SummonsCog(commands.Cog):
                 except Exception:
                     pass
         audit(interaction.guild.id, member.id, "leave", "summon", str(doc["_id"]), doc["name"])
-        await interaction.response.send_message(f"👋 Left **{doc['name']}**!", ephemeral=True)
+        await interaction.response.send_message(f"👋 Left **{doc['name']}**!")
         await self.refresh_member_embed(interaction.guild, doc)
 
     @app_commands.command(name="invite_to")
@@ -785,27 +782,27 @@ class SummonsCog(commands.Cog):
         """Invite someone to a summon."""
         doc = self._resolve(interaction.guild.id, summon)
         if not doc:
-            await interaction.response.send_message("That summon doesn't exist.", ephemeral=True)
+            await interaction.response.send_message("That summon doesn't exist.")
             return
         if doc.get("canjoin") != "invited":
             await interaction.response.send_message(
-                "This summon is open for anyone to join — no invite needed.", ephemeral=True
+                "This summon is open for anyone to join — no invite needed."
             )
             return
         if not self._can_invite(interaction.user, doc):
             await interaction.response.send_message(
-                "You're not allowed to invite to this summon.", ephemeral=True
+                "You're not allowed to invite to this summon."
             )
             return
         if user.id in doc.get("banned", []):
             await interaction.response.send_message(
-                f"{user.mention} is banned from this summon.", ephemeral=True
+                f"{user.mention} is banned from this summon."
             )
             return
         S.update_one({"_id": doc["_id"]}, {"$addToSet": {"join_ids": user.id}})
         audit(interaction.guild.id, interaction.user.id, "invite", "summon", str(doc["_id"]), f"{doc['name']} -> {user.id}")
         await interaction.response.send_message(
-            f"✅ {user.mention} can now join **{doc['name']}**!", ephemeral=True
+            f"✅ {user.mention} can now join **{doc['name']}**!"
         )
 
     @app_commands.command(name="ban_from")
@@ -815,15 +812,15 @@ class SummonsCog(commands.Cog):
         """Ban a user from a summon."""
         doc = self._resolve(interaction.guild.id, summon)
         if not doc:
-            await interaction.response.send_message("That summon doesn't exist.", ephemeral=True)
+            await interaction.response.send_message("That summon doesn't exist.")
             return
         if not (is_admin(interaction.user) or doc.get("creator_id") == interaction.user.id or interaction.user.id in doc.get("co_owner_ids", [])):
             await interaction.response.send_message(
-                "Only the owner, co-owners, and admins can ban.", ephemeral=True
+                "Only the owner, co-owners, and admins can ban."
             )
             return
         if user.id == doc.get("creator_id"):
-            await interaction.response.send_message("You can't ban the owner.", ephemeral=True)
+            await interaction.response.send_message("You can't ban the owner.")
             return
         S.update_one(
             {"_id": doc["_id"]},
@@ -838,7 +835,7 @@ class SummonsCog(commands.Cog):
                 except Exception:
                     pass
         audit(interaction.guild.id, interaction.user.id, "ban", "summon", str(doc["_id"]), f"{doc['name']} -> {user.id}")
-        await interaction.response.send_message(f"⛔ Banned {user.mention} from **{doc['name']}**.", ephemeral=True)
+        await interaction.response.send_message(f"⛔ Banned {user.mention} from **{doc['name']}**.")
         await self.refresh_member_embed(interaction.guild, doc)
 
     @app_commands.command(name="unban_from")
@@ -848,16 +845,16 @@ class SummonsCog(commands.Cog):
         """Unban a user from a summon."""
         doc = self._resolve(interaction.guild.id, summon)
         if not doc:
-            await interaction.response.send_message("That summon doesn't exist.", ephemeral=True)
+            await interaction.response.send_message("That summon doesn't exist.")
             return
         if not (is_admin(interaction.user) or doc.get("creator_id") == interaction.user.id or interaction.user.id in doc.get("co_owner_ids", [])):
             await interaction.response.send_message(
-                "Only the owner, co-owners, and admins can unban.", ephemeral=True
+                "Only the owner, co-owners, and admins can unban."
             )
             return
         S.update_one({"_id": doc["_id"]}, {"$pull": {"banned": user.id}})
         audit(interaction.guild.id, interaction.user.id, "unban", "summon", str(doc["_id"]), f"{doc['name']} -> {user.id}")
-        await interaction.response.send_message(f"✅ Unbanned {user.mention} from **{doc['name']}**.", ephemeral=True)
+        await interaction.response.send_message(f"✅ Unbanned {user.mention} from **{doc['name']}**.")
 
     # ---------- slash: list groups ----------
 
@@ -866,7 +863,7 @@ class SummonsCog(commands.Cog):
         """List all groups you can join or are in."""
         docs = list(S.find({"guild_id": interaction.guild.id, "enabled": True}))
         if not docs:
-            await interaction.response.send_message("No summons exist in this server yet.", ephemeral=True)
+            await interaction.response.send_message("No summons exist in this server yet.")
             return
         member = interaction.user
         admin = is_admin(member)
@@ -890,9 +887,9 @@ class SummonsCog(commands.Cog):
             )
             shown += 1
         if not shown:
-            await interaction.response.send_message("No groups available.", ephemeral=True)
+            await interaction.response.send_message("No groups available.")
             return
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_message(embed=embed)
 
     # ---------- slash: servercard ----------
 
@@ -1197,7 +1194,7 @@ class AllowWhoView(discord.ui.View):
 
     async def interaction_check(self, interaction):
         if interaction.user.id != self.author.id:
-            await interaction.response.send_message("Only the admin who started this can configure it.", ephemeral=True)
+            await interaction.response.send_message("Only the admin who started this can configure it.")
             return False
         return True
 
@@ -1223,7 +1220,7 @@ class AllowRoleModal(discord.ui.Modal):
         value = self.role_input.value.strip()
         role = _resolve_real_role(interaction.guild, value)
         if role is None:
-            await interaction.response.send_message("Could not find that role.", ephemeral=True)
+            await interaction.response.send_message("Could not find that role.")
             return
         _add_allow(interaction.guild.id, self.target_role.id, "role", role.id)
         audit(interaction.guild.id, interaction.user.id, "allow", "role", self.target_role.id, f"{role.name} -> {self.target_role.name}")
@@ -1245,7 +1242,7 @@ class AllowPersonModal(discord.ui.Modal):
         value = self.user_input.value.strip()
         member = _resolve_real_member(interaction.guild, value)
         if member is None:
-            await interaction.response.send_message("Could not find that user.", ephemeral=True)
+            await interaction.response.send_message("Could not find that user.")
             return
         _add_allow(interaction.guild.id, self.target_role.id, "user", member.id)
         audit(interaction.guild.id, interaction.user.id, "allow", "role", self.target_role.id, f"{member.id} -> {self.target_role.name}")
