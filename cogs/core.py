@@ -103,10 +103,8 @@ class HelpView(discord.ui.View):
                 "title": "🕶️ Anonymous chat",
                 "fields": [
                     ("/secret say <message> [code]", "Post an anonymous message. Codes have a Reply button; replies land in your /inbox."),
-                    ("/secret code new", "Generate a new code (until your limit is used up)."),
-                    ("/secret code list", "List all your codes."),
-                    ("/secret code delete <code>", "Delete one of your codes to free a slot."),
-                    ("/inbox", "See where your codes were mentioned (jump links) + Clear inbox / Clear chat buttons."),
+                    ("/secret code delete <code>", "Delete one of your codes (pick from the list) to free a slot. New codes are generated via `/secret say` or the Reply button."),
+                    ("/inbox", "DM-only: see where your codes were mentioned (jump links) + Clear inbox / Clear chat buttons."),
                 ],
             },
         ]

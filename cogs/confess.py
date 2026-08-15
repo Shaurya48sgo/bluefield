@@ -24,13 +24,14 @@ def _jump_link(guild_id, channel_id, message_id):
 
 
 class SecretReplyModal(discord.ui.Modal):
-    def __init__(self, cog, guild_id, channel_id, original_code, code):
+    def __init__(self, cog, guild_id, channel_id, original_code, code, original_message=None):
         super().__init__(title=f"Reply as code {code}")
         self.cog = cog
         self.guild_id = guild_id
         self.channel_id = channel_id
         self.original_code = original_code
         self.code = code
+        self.original_message = original_message
         self.text_input = discord.ui.TextInput(
             label="Your reply",
             style=discord.TextStyle.paragraph,
@@ -44,17 +45,20 @@ class SecretReplyModal(discord.ui.Modal):
         if not text:
             await interaction.response.send_message("Reply cannot be empty.")
             return
-        await self.cog.post_reply(interaction, self.guild_id, self.channel_id, self.original_code, self.code, text)
+        await self.cog.post_reply(
+            interaction, self.guild_id, self.channel_id, self.original_code, self.code, text, self.original_message
+        )
 
 
 class ReplyCodeSelectView(discord.ui.View):
-    def __init__(self, cog, author, guild_id, channel_id, original_code, docs):
+    def __init__(self, cog, author, guild_id, channel_id, original_code, docs, original_message=None):
         super().__init__(timeout=300)
         self.cog = cog
         self.author = author
         self.guild_id = guild_id
         self.channel_id = channel_id
         self.original_code = original_code
+        self.original_message = original_message
         self.docs = docs
         options = [discord.SelectOption(label=d["code"], value=d["code"]) for d in docs]
         limit = self.cog._max_codes(guild_id)
@@ -83,7 +87,9 @@ class ReplyCodeSelectView(discord.ui.View):
             value = self.cog._new_code(self.guild_id, self.author.id)
             self.docs = list(C.find({"guild_id": self.guild_id, "user_id": self.author.id}).sort("created_at", 1))
         await interaction.response.send_modal(
-            SecretReplyModal(self.cog, self.guild_id, self.channel_id, self.original_code, value)
+            SecretReplyModal(
+                self.cog, self.guild_id, self.channel_id, self.original_code, value, self.original_message
+            )
         )
 
 
@@ -103,7 +109,9 @@ class SecretReplyButton(discord.ui.Button):
         )
         await interaction.response.send_message(
             embed=embed,
-            view=ReplyCodeSelectView(self.view.cog, interaction.user, self.guild_id, self.channel_id, self.code, docs),
+            view=ReplyCodeSelectView(
+                self.view.cog, interaction.user, self.guild_id, self.channel_id, self.code, docs, interaction.message
+            ),
             ephemeral=True,
         )
 
@@ -130,19 +138,16 @@ class InboxView(discord.ui.View):
 
     @discord.ui.button(label="Clear inbox", style=discord.ButtonStyle.danger)
     async def clear_inbox_button(self, interaction, button):
-        query = {"user_id": self.author.id}
-        if self.guild_id:
-            query["guild_id"] = self.guild_id
-        I.delete_many(query)
+        I.delete_many({"user_id": self.author.id})
         embed = discord.Embed(title="Inbox", description="Inbox cleared.", color=discord.Colour(0x9B59B6))
         await interaction.response.edit_message(embed=embed, view=None)
 
     @discord.ui.button(label="Clear chat", style=discord.ButtonStyle.secondary)
     async def clear_chat_button(self, interaction, button):
-        removed = await self.cog.clear_secret_chat(self.guild_id, self.author.id)
+        removed = await self.cog.clear_secret_chat(None, self.author.id)
         embed = discord.Embed(
             title="Inbox",
-            description=f"Cleared **{removed}** of your secret messages from the channel.",
+            description=f"Cleared **{removed}** of your secret messages.",
             color=discord.Colour(0x9B59B6),
         )
         await interaction.response.edit_message(embed=embed)
@@ -196,6 +201,16 @@ class ConfessCog(commands.Cog):
         if len(docs) < limit:
             out.append(app_commands.Choice(name="Generate new", value="GENERATE_NEW"))
         return out[:25]
+
+    async def delete_autocomplete(self, interaction, current):
+        docs = C.find({"guild_id": interaction.guild.id, "user_id": interaction.user.id})
+        out = []
+        for d in docs:
+            if current.lower() in d["code"].lower():
+                out.append(app_commands.Choice(name=d["code"], value=d["code"]))
+            if len(out) >= 25:
+                break
+        return out
 
     @secret.command(name="say")
     @app_commands.describe(message="The message to post anonymously", code="Pick one of your codes, or 'Generate new'")
@@ -273,7 +288,7 @@ class ConfessCog(commands.Cog):
         )
         await interaction.response.send_message(embed=confirm, ephemeral=True)
 
-    async def post_reply(self, interaction, guild_id, channel_id, original_code, code, text):
+    async def post_reply(self, interaction, guild_id, channel_id, original_code, code, text, original_message=None):
         embed = discord.Embed(
             color=discord.Colour(0x9B59B6),
             title="Reply",
@@ -286,11 +301,14 @@ class ConfessCog(commands.Cog):
             return
         view = SecretReplyView(self, guild_id, channel_id, code)
         try:
-            sent = await channel.send(
-                embed=embed,
-                view=view,
-                allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=False),
-            )
+            kwargs = {
+                "embed": embed,
+                "view": view,
+                "allowed_mentions": discord.AllowedMentions(everyone=False, roles=False, users=False),
+            }
+            if original_message is not None:
+                kwargs["reference"] = original_message
+            sent = await channel.send(**kwargs)
         except Exception as e:
             await interaction.response.send_message(f"Failed to post reply: {e}")
             return
@@ -312,9 +330,12 @@ class ConfessCog(commands.Cog):
 
     async def clear_secret_chat(self, guild_id, user_id):
         removed = 0
-        docs = list(M.find({"guild_id": guild_id, "owner_id": user_id}))
+        query = {"owner_id": user_id}
+        if guild_id:
+            query["guild_id"] = guild_id
+        docs = list(M.find(query))
         for d in docs:
-            guild = self.bot.get_guild(guild_id)
+            guild = self.bot.get_guild(d["guild_id"])
             if not guild:
                 continue
             channel = guild.get_channel(d["channel_id"])
@@ -326,7 +347,7 @@ class ConfessCog(commands.Cog):
                 removed += 1
             except Exception:
                 pass
-        M.delete_many({"guild_id": guild_id, "owner_id": user_id})
+        M.delete_many(query)
         return removed
 
     def _new_code(self, guild_id, user_id):
@@ -353,56 +374,15 @@ class ConfessCog(commands.Cog):
     code = app_commands.Group(name="code", description="Manage your anonymous codes")
     secret.add_command(code)
 
-    @code.command(name="new")
-    async def code_new(self, interaction):
-        """Generate a new code (until your limit is used up)."""
-        if is_blacklisted(interaction.guild.id, interaction.user.id, interaction.user):
-            await interaction.response.send_message("You are blacklisted from anonymous chat.")
-            return
-        gid = interaction.guild.id
-        uid = interaction.user.id
-        limit = self._max_codes(gid)
-        count = C.count_documents({"guild_id": gid, "user_id": uid})
-        if count >= limit:
-            docs = list(C.find({"guild_id": gid, "user_id": uid}).sort("created_at", 1))
-            await interaction.response.send_message(
-                f"You've reached the limit of **{limit}** codes.\nYour codes: "
-                + (", ".join(f"`{d['code']}`" for d in docs) if docs else "none")
-                + "\nUse `/secret code delete <code>` to free a slot.",
-                ephemeral=True,
-            )
-            return
-        code = self._new_code(gid, uid)
-        docs = list(C.find({"guild_id": gid, "user_id": uid}).sort("created_at", 1))
-        await interaction.response.send_message(
-            f"🕶️ New code: **`{code}`** ({count + 1}/{limit})\nYour codes: "
-            + ", ".join(f"`{d['code']}`" for d in docs)
-            + "\nUse `/secret say` to talk.",
-            ephemeral=True,
-        )
-
-    @code.command(name="list")
-    async def code_list(self, interaction):
-        """List all your anonymous codes."""
-        docs = list(C.find({"guild_id": interaction.guild.id, "user_id": interaction.user.id}).sort("created_at", 1))
-        limit = self._max_codes(interaction.guild.id)
-        if not docs:
-            await interaction.response.send_message(
-                f"You have no codes yet. Use `/secret code new` to create one. ({0}/{limit} slots used)",
-                ephemeral=True,
-            )
-            return
-        lines = [f"`{d['code']}`" for d in docs]
-        await interaction.response.send_message(
-            f"🕶️ Your codes:\n" + "\n".join(lines) + f"\n({len(docs)}/{limit} slots used)",
-            ephemeral=True,
-        )
-
     @code.command(name="delete")
-    @app_commands.describe(code="The code to delete")
+    @app_commands.describe(code="Pick one of your codes to delete")
+    @app_commands.autocomplete(code=delete_autocomplete)
     async def code_delete(self, interaction, code: str):
         """Delete one of your anonymous codes (frees a slot)."""
         code = code.strip().upper()
+        if code == "GENERATE_NEW":
+            await interaction.response.send_message("That's not one of your codes.")
+            return
         res = C.delete_one({"guild_id": interaction.guild.id, "code": code, "user_id": interaction.user.id})
         if res.deleted_count == 0:
             await interaction.response.send_message("That's not one of your codes.")
@@ -414,9 +394,14 @@ class ConfessCog(commands.Cog):
 
     @app_commands.command(name="inbox")
     async def inbox(self, interaction):
-        """Show where your codes were replied to, with jump links."""
-        gid = interaction.guild.id
-        entries = list(I.find({"guild_id": gid, "user_id": interaction.user.id}).sort("created_at", -1).limit(15))
+        """See where your codes were mentioned. Only works in DMs with the bot."""
+        if interaction.guild is not None:
+            await interaction.response.send_message(
+                "`/inbox` only works in DMs with the bot — open a DM and run it there.",
+                ephemeral=True,
+            )
+            return
+        entries = list(I.find({"user_id": interaction.user.id}).sort("created_at", -1).limit(15))
         embed = discord.Embed(
             title="Inbox",
             color=discord.Colour(0x9B59B6),
@@ -424,13 +409,13 @@ class ConfessCog(commands.Cog):
         )
         if entries:
             for e in entries:
-                link = _jump_link(gid, e["channel_id"], e["message_id"])
+                link = _jump_link(e["guild_id"], e["channel_id"], e["message_id"])
                 embed.add_field(
                     name=f"Code `{e['code']}`",
                     value=f"{e['text'][:200]}\n[Jump to message]({link})",
                     inline=False,
                 )
-        await interaction.response.send_message(embed=embed, view=InboxView(self, interaction.user, gid))
+        await interaction.response.send_message(embed=embed, view=InboxView(self, interaction.user, None))
 
     # ---------- admin: view/delete any code ----------
 

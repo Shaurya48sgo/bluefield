@@ -88,55 +88,6 @@ def add_code(db, uid=100, code="TESTCODE", guild_id=1):
 
 
 @skip
-def test_code_new_creates_code():
-    client, db = get_test_db()
-    try:
-        cog = make_cog(db)
-        member = make_member(uid=100)
-        interaction = make_interaction(member)
-        asyncio.run(cog.code_new.callback(cog, interaction))
-        assert db["anon_codes"].count_documents({"guild_id": 1, "user_id": 100}) == 1
-        interaction.response.send_message.assert_awaited_once()
-    finally:
-        client.close()
-
-
-@skip
-def test_code_new_limit_reached():
-    client, db = get_test_db()
-    try:
-        cog = make_cog(db)
-        db["guild_settings"].insert_one({"guild_id": 1, "confess_max_codes": 2})
-        for i in range(2):
-            add_code(db, uid=100, code=f"CODE{i}")
-        member = make_member(uid=100)
-        interaction = make_interaction(member)
-        asyncio.run(cog.code_new.callback(cog, interaction))
-        assert db["anon_codes"].count_documents({"guild_id": 1, "user_id": 100}) == 2
-        msg = interaction.response.send_message.await_args.args[0]
-        assert "limit" in msg.lower()
-    finally:
-        client.close()
-
-
-@skip
-def test_code_list_shows_codes():
-    client, db = get_test_db()
-    try:
-        cog = make_cog(db)
-        add_code(db, uid=100, code="CODE1")
-        add_code(db, uid=100, code="CODE2")
-        member = make_member(uid=100)
-        interaction = make_interaction(member)
-        asyncio.run(cog.code_list.callback(cog, interaction))
-        msg = interaction.response.send_message.await_args.args[0]
-        assert "CODE1" in msg
-        assert "CODE2" in msg
-    finally:
-        client.close()
-
-
-@skip
 def test_code_delete_removes_own_code():
     client, db = get_test_db()
     try:
@@ -410,6 +361,7 @@ def test_inbox_shows_entries_with_links():
         db["inbox"].insert_one({"guild_id": 1, "user_id": 100, "code": "TESTCODE", "channel_id": 555, "message_id": 888, "text": "hi"})
         member = make_member(uid=100)
         interaction = make_interaction(member, channel_id=555)
+        interaction.guild = None  # DM
         asyncio.run(cog.inbox.callback(cog, interaction))
         interaction.response.send_message.assert_awaited_once()
         embed = interaction.response.send_message.await_args.kwargs["embed"]
@@ -512,5 +464,63 @@ def test_reply_generate_new_creates_code_and_opens_modal():
         asyncio.run(view.on_select(interaction))
         assert db["anon_codes"].count_documents({"guild_id": 1, "user_id": 100}) == 2
         interaction.response.send_modal.assert_awaited_once()
+    finally:
+        client.close()
+
+
+@skip
+def test_inbox_rejects_guild_use():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        member = make_member(uid=100)
+        interaction = make_interaction(member, channel_id=555)  # guild context
+        asyncio.run(cog.inbox.callback(cog, interaction))
+        msg = interaction.response.send_message.await_args.args[0]
+        assert "only works in dms" in msg.lower()
+    finally:
+        client.close()
+
+
+@skip
+def test_delete_autocomplete_only_shows_codes():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        db["guild_settings"].insert_one({"guild_id": 1, "confess_max_codes": 2})
+        add_code(db, uid=100, code="CODE1")
+        member = make_member(uid=100)
+        interaction = MagicMock()
+        interaction.user = member
+        interaction.guild = make_guild()
+        result = asyncio.run(cog.delete_autocomplete(interaction, ""))
+        values = [c.value for c in result]
+        assert values == ["CODE1"]
+        assert "GENERATE_NEW" not in values
+    finally:
+        client.close()
+
+
+@skip
+def test_post_reply_uses_reference_to_original():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        db["guild_settings"].insert_one({"guild_id": 1, "confess_channel_id": 555})
+        add_code(db, uid=100, code="ORIGCODE")
+        member = make_member(uid=200)
+        guild = make_guild()
+        channel = guild.get_channel(555)
+        interaction = MagicMock()
+        interaction.user = member
+        interaction.guild = guild
+        interaction.response.send_message = AsyncMock()
+        original = MagicMock()
+        original.id = 7000
+        asyncio.run(cog.post_reply(interaction, 1, 555, "ORIGCODE", "REPLYCODE", "hi", original))
+        channel.send.assert_awaited_once()
+        kwargs = channel.send.await_args.kwargs
+        assert kwargs["reference"] == original
+        assert db["inbox"].count_documents({"user_id": 100, "code": "ORIGCODE"}) == 1
     finally:
         client.close()
