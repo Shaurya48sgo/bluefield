@@ -89,16 +89,27 @@ class ConfessCog(commands.Cog):
             code = self._new_code(gid, uid)
             docs = list(C.find({"guild_id": gid, "user_id": uid}).sort("created_at", 1))
 
-        await interaction.response.send_message(
-            f"💬 **Code {code}**: {message}",
-            allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=False),
+        embed = discord.Embed(
+            color=discord.Colour(0x9B59B6),
+            description=f"```\n{code}\n```\n{message}",
         )
-        lines = "Your codes: " + ", ".join(f"`{d['code']}`" for d in docs) if docs else "You have no codes."
-        note = f"🕶️ Used code **`{code}`**. {lines} ({len(docs)}/{limit} slots)\nNext time use `/secret say code:<code> message:...` to pick another."
         try:
-            await interaction.followup.send(note, ephemeral=True)
-        except Exception:
-            pass
+            await channel.send(
+                embed=embed,
+                allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=False),
+            )
+        except Exception as e:
+            await interaction.response.send_message(f"Failed to post: {e}")
+            return
+
+        confirm = discord.Embed(
+            title="🕶️ Posted anonymously",
+            color=discord.Colour(0x9B59B6),
+            description=f"Your secret message was posted with code **`{code}`**.\n"
+            + ("Your codes: " + ", ".join(f"`{d['code']}`" for d in docs) if docs else "You have no codes.")
+            + f" ({len(docs)}/{limit} slots)\nNext time use `/secret say code:<code> message:...` to pick another.",
+        )
+        await interaction.response.send_message(embed=confirm, ephemeral=True)
 
     def _new_code(self, guild_id, user_id):
         limit = self._max_codes(guild_id)

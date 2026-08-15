@@ -43,8 +43,23 @@ def make_member(uid=100, manage_roles=False, administrator=False):
 def make_guild():
     guild = MagicMock()
     guild.id = 1
-    guild.get_channel.side_effect = lambda cid: MagicMock(id=cid) if cid else None
+    channels = {}
+
+    def get_channel(cid):
+        if cid not in channels:
+            channels[cid] = _make_channel(cid)
+        return channels[cid]
+
+    guild.get_channel.side_effect = get_channel
     return guild
+
+
+def _make_channel(cid):
+    channel = MagicMock()
+    channel.id = cid
+    channel.mention = f"<#{cid}>"
+    channel.send = AsyncMock()
+    return channel
 
 
 def make_interaction(member, guild=None, channel_id=555):
@@ -199,9 +214,14 @@ def test_say_success_posts_anonymously():
         member = make_member(uid=100)
         interaction = make_interaction(member, channel_id=555)
         asyncio.run(cog.say.callback(cog, interaction, "hello world", "testcode"))
-        msg = interaction.response.send_message.await_args.args[0]
-        assert "TESTCODE" in msg
-        assert "hello world" in msg
+        channel = interaction.guild.get_channel(555)
+        channel.send.assert_awaited_once()
+        embed = channel.send.await_args.kwargs["embed"]
+        assert "TESTCODE" in embed.description
+        assert "hello world" in embed.description
+        confirm = interaction.response.send_message.await_args.kwargs["embed"]
+        assert "posted" in confirm.title.lower()
+        assert interaction.response.send_message.await_args.kwargs["ephemeral"] is True
     finally:
         client.close()
 
@@ -264,9 +284,10 @@ def test_say_auto_generates_first_code():
         member = make_member(uid=100)
         interaction = make_interaction(member, channel_id=555)
         asyncio.run(cog.say.callback(cog, interaction, "first secret", None))
-        msg = interaction.response.send_message.await_args.args[0]
-        assert "Code" in msg
-        assert "first secret" in msg
+        channel = interaction.guild.get_channel(555)
+        channel.send.assert_awaited_once()
+        embed = channel.send.await_args.kwargs["embed"]
+        assert "first secret" in embed.description
         assert db["anon_codes"].count_documents({"guild_id": 1, "user_id": 100}) == 1
     finally:
         client.close()
@@ -283,9 +304,10 @@ def test_say_with_code_uses_given_code():
         member = make_member(uid=100)
         interaction = make_interaction(member, channel_id=555)
         asyncio.run(cog.say.callback(cog, interaction, "hello", "CODE1"))
-        msg = interaction.response.send_message.await_args.args[0]
-        assert "CODE1" in msg
-        assert "CODE2" not in msg
+        channel = interaction.guild.get_channel(555)
+        embed = channel.send.await_args.kwargs["embed"]
+        assert "CODE1" in embed.description
+        assert "CODE2" not in embed.description
         assert db["anon_codes"].count_documents({"guild_id": 1, "user_id": 100}) == 2
     finally:
         client.close()
