@@ -189,8 +189,18 @@ class HelpView(discord.ui.View):
                     (f"{self.prefix}allow summon <@role>", "Allow a real role to be summoned by specific users/roles."),
                     (f"{self.prefix}blacklist <@user> / {self.prefix}unblacklist <@user>", "Block someone from summon commands (they can still join)."),
                     (f"{self.prefix}summonsetup_all", "Set up log channels + limits."),
+                    (f"{self.prefix}confessionsetup_all", "Set up the anonymous chat channel + code limit."),
                     (f"{self.prefix}purge", "Clean up stale summon entries."),
                     (f"{self.prefix}prefix_now <new prefix>", "Change the bot's prefix (owner only)."),
+                ],
+            },
+            {
+                "title": "🕶️ Anonymous chat",
+                "fields": [
+                    ("/say <code> <message>", "Post an anonymous message in the confession channel using your code."),
+                    ("/code new", "Create a new anonymous code (max 5)."),
+                    ("/code list", "List your anonymous codes."),
+                    ("/code delete <code>", "Delete one of your codes to free a slot."),
                 ],
             },
         ]

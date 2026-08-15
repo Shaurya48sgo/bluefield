@@ -1,4 +1,6 @@
 import os
+import random
+import string
 
 from pymongo import MongoClient
 
@@ -12,6 +14,7 @@ S = _db["summon_roles"]
 AS = _db["summon_settings"]
 BL = _db["blacklist"]
 AL = _db["audit_log"]
+C = _db["anon_codes"]
 
 PREFIX_CACHE = {}
 
@@ -19,6 +22,16 @@ try:
     S.create_index([("guild_id", 1), ("name", 1)], unique=True)
 except Exception:
     pass
+
+try:
+    C.create_index([("guild_id", 1), ("code", 1)], unique=True)
+except Exception:
+    pass
+
+
+def generate_code(length=8):
+    chars = string.ascii_uppercase + string.digits
+    return "".join(random.choice(chars) for _ in range(length))
 
 
 def get_guild_prefix_sync(guild_id):

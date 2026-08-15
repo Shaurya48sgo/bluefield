@@ -40,6 +40,7 @@ async def on_ready():
 async def setup_hook():
     await bot.load_extension("cogs.core")
     await bot.load_extension("cogs.summons")
+    await bot.load_extension("cogs.confess")
 
 
 bot.setup_hook = setup_hook
