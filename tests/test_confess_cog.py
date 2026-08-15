@@ -217,8 +217,9 @@ def test_say_success_posts_anonymously():
         channel = interaction.guild.get_channel(555)
         channel.send.assert_awaited_once()
         embed = channel.send.await_args.kwargs["embed"]
-        assert "TESTCODE" in embed.description
-        assert "hello world" in embed.description
+        fields = {f.name: f.value for f in embed.fields}
+        assert "TESTCODE" in fields["🔑 Code"]
+        assert "hello world" in fields["💬 Message"]
         confirm = interaction.response.send_message.await_args.kwargs["embed"]
         assert "posted" in confirm.title.lower()
         assert interaction.response.send_message.await_args.kwargs["ephemeral"] is True
@@ -287,7 +288,8 @@ def test_say_auto_generates_first_code():
         channel = interaction.guild.get_channel(555)
         channel.send.assert_awaited_once()
         embed = channel.send.await_args.kwargs["embed"]
-        assert "first secret" in embed.description
+        fields = {f.name: f.value for f in embed.fields}
+        assert "first secret" in fields["💬 Message"]
         assert db["anon_codes"].count_documents({"guild_id": 1, "user_id": 100}) == 1
     finally:
         client.close()
@@ -306,8 +308,9 @@ def test_say_with_code_uses_given_code():
         asyncio.run(cog.say.callback(cog, interaction, "hello", "CODE1"))
         channel = interaction.guild.get_channel(555)
         embed = channel.send.await_args.kwargs["embed"]
-        assert "CODE1" in embed.description
-        assert "CODE2" not in embed.description
+        fields = {f.name: f.value for f in embed.fields}
+        assert "CODE1" in fields["🔑 Code"]
+        assert "CODE2" not in fields["🔑 Code"]
         assert db["anon_codes"].count_documents({"guild_id": 1, "user_id": 100}) == 2
     finally:
         client.close()

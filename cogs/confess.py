@@ -53,8 +53,19 @@ class ConfessCog(commands.Cog):
 
     secret = app_commands.Group(name="secret", description="Anonymous secret chat")
 
+    async def code_autocomplete(self, interaction, current):
+        docs = C.find({"guild_id": interaction.guild.id, "user_id": interaction.user.id})
+        out = []
+        for d in docs:
+            if current.lower() in d["code"].lower():
+                out.append(app_commands.Choice(name=d["code"], value=d["code"]))
+            if len(out) >= 25:
+                break
+        return out
+
     @secret.command(name="say")
-    @app_commands.describe(message="The message to post anonymously", code="Your code (optional if you have none yet)")
+    @app_commands.describe(message="The message to post anonymously", code="Your code (pick one, or leave blank for auto)")
+    @app_commands.autocomplete(code=code_autocomplete)
     async def say(self, interaction, message: str, code: str = None):
         """Post anonymously. Your first code is auto-created; codes are listed for you."""
         channel = self._channel(interaction.guild)
@@ -91,8 +102,9 @@ class ConfessCog(commands.Cog):
 
         embed = discord.Embed(
             color=discord.Colour(0x9B59B6),
-            description=f"```\n{code}\n```\n{message}",
         )
+        embed.add_field(name="🔑 Code", value=f"```\n{code}\n```", inline=False)
+        embed.add_field(name="💬 Message", value=message, inline=False)
         try:
             await channel.send(
                 embed=embed,
