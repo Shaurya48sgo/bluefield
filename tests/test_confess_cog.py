@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from cogs.confess import ConfessCog, SecretReplyButton, SecretReplyView
+from cogs.confess import ConfessCog, ReplyCodeSelectView, SecretReplyButton, SecretReplyView
 
 from mongo_helpers import get_test_db, mongo_available
 
@@ -457,5 +457,60 @@ def test_reply_button_shows_ephemeral_code_selector():
         labels = [o.label for o in select_view.code_select.options]
         assert "MYCODE" in labels
         assert "OTHER" in labels
+    finally:
+        client.close()
+
+
+@skip
+def test_reply_selector_shows_generate_new_when_slot_available():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        db["guild_settings"].insert_one({"guild_id": 1, "confess_max_codes": 2})
+        add_code(db, uid=100, code="MYCODE")
+        docs = list(db["anon_codes"].find({"guild_id": 1, "user_id": 100}))
+        view = ReplyCodeSelectView(cog, MagicMock(id=100), 1, 555, "ORIGINAL", docs)
+        labels = [o.label for o in view.code_select.options]
+        assert "MYCODE" in labels
+        assert "Generate new" in labels
+    finally:
+        client.close()
+
+
+@skip
+def test_reply_selector_no_generate_new_at_limit():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        db["guild_settings"].insert_one({"guild_id": 1, "confess_max_codes": 2})
+        add_code(db, uid=100, code="MYCODE")
+        add_code(db, uid=100, code="OTHER")
+        docs = list(db["anon_codes"].find({"guild_id": 1, "user_id": 100}))
+        view = ReplyCodeSelectView(cog, MagicMock(id=100), 1, 555, "ORIGINAL", docs)
+        labels = [o.label for o in view.code_select.options]
+        assert "Generate new" not in labels
+    finally:
+        client.close()
+
+
+@skip
+def test_reply_generate_new_creates_code_and_opens_modal():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        db["guild_settings"].insert_one({"guild_id": 1, "confess_max_codes": 2})
+        add_code(db, uid=100, code="MYCODE")
+        docs = list(db["anon_codes"].find({"guild_id": 1, "user_id": 100}))
+        view = ReplyCodeSelectView(cog, MagicMock(id=100), 1, 555, "ORIGINAL", docs)
+        view.code_select = MagicMock()
+        view.code_select.values = ["GENERATE_NEW"]
+        interaction = MagicMock()
+        interaction.user = MagicMock()
+        interaction.user.id = 100
+        interaction.response.send_modal = AsyncMock()
+        interaction.response.send_message = AsyncMock()
+        asyncio.run(view.on_select(interaction))
+        assert db["anon_codes"].count_documents({"guild_id": 1, "user_id": 100}) == 2
+        interaction.response.send_modal.assert_awaited_once()
     finally:
         client.close()

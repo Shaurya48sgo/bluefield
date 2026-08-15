@@ -55,7 +55,11 @@ class ReplyCodeSelectView(discord.ui.View):
         self.guild_id = guild_id
         self.channel_id = channel_id
         self.original_code = original_code
+        self.docs = docs
         options = [discord.SelectOption(label=d["code"], value=d["code"]) for d in docs]
+        limit = self.cog._max_codes(guild_id)
+        if len(docs) < limit:
+            options.append(discord.SelectOption(label="Generate new", value="GENERATE_NEW"))
         self.code_select = discord.ui.Select(placeholder="Pick your code", options=options)
         self.code_select.callback = self.on_select
         self.add_item(self.code_select)
@@ -67,9 +71,19 @@ class ReplyCodeSelectView(discord.ui.View):
         return True
 
     async def on_select(self, interaction):
-        code = self.code_select.values[0]
+        value = self.code_select.values[0]
+        if value == "GENERATE_NEW":
+            limit = self.cog._max_codes(self.guild_id)
+            if len(self.docs) >= limit:
+                await interaction.response.send_message(
+                    f"You've reached the limit of **{limit}** codes. Delete one first with `/secret code delete <code>`.",
+                    ephemeral=True,
+                )
+                return
+            value = self.cog._new_code(self.guild_id, self.author.id)
+            self.docs = list(C.find({"guild_id": self.guild_id, "user_id": self.author.id}).sort("created_at", 1))
         await interaction.response.send_modal(
-            SecretReplyModal(self.cog, self.guild_id, self.channel_id, self.original_code, code)
+            SecretReplyModal(self.cog, self.guild_id, self.channel_id, self.original_code, value)
         )
 
 
@@ -82,12 +96,6 @@ class SecretReplyButton(discord.ui.Button):
 
     async def callback(self, interaction):
         docs = list(C.find({"guild_id": self.guild_id, "user_id": interaction.user.id}).sort("created_at", 1))
-        if not docs:
-            await interaction.response.send_message(
-                "You have no codes yet. Create one with `/secret code new`.",
-                ephemeral=True,
-            )
-            return
         embed = discord.Embed(
             title="Reply",
             description="Which code do you want to reply as?",
