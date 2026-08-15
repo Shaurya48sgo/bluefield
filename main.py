@@ -5,7 +5,8 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
-from cogs.common import get_prefix
+from cogs.common import P, get_prefix
+from cogs.summons import EasyJoinView
 
 load_dotenv()
 
@@ -41,6 +42,11 @@ async def setup_hook():
     await bot.load_extension("cogs.core")
     await bot.load_extension("cogs.summons")
     await bot.load_extension("cogs.confess")
+    for panel in P.find():
+        try:
+            bot.add_view(EasyJoinView(bot.cogs["SummonsCog"], panel["summon_id"]), message_id=panel["message_id"])
+        except Exception:
+            pass
 
 
 bot.setup_hook = setup_hook

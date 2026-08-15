@@ -169,6 +169,7 @@ class HelpView(discord.ui.View):
                 "title": "📦 Manage a summon",
                 "fields": [
                     ("/create summon <name> <canping> <canjoin>", "Create a virtual summon (max 3 for members)."),
+                    ("/group easyjoin <summon>", "Post Join/Leave buttons for an open-join summon (reaction-role style)."),
                     ("/edit summon <summon>", "Open the edit panel (join/ping selectors + rename + add pingers/inviters)."),
                     ("/delete summon <summon>", "Delete a summon."),
                     ("/join <summon> / /leave <summon>", "Join or leave a summon."),

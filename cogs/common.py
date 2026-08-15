@@ -15,6 +15,7 @@ AS = _db["summon_settings"]
 BL = _db["blacklist"]
 AL = _db["audit_log"]
 C = _db["anon_codes"]
+P = _db["easyjoin_panels"]
 
 PREFIX_CACHE = {}
 

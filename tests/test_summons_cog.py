@@ -18,6 +18,7 @@ def make_cog(db):
     db.blacklist.drop()
     db.audit_log.drop()
     db.guild_settings.drop()
+    db.easyjoin_panels.drop()
     cog = SummonsCog(MagicMock())
     cog.bot = MagicMock()
     from cogs import common, summons
@@ -28,6 +29,7 @@ def make_cog(db):
         mod.BL = db["blacklist"]
         mod.AL = db["audit_log"]
         mod.G = db["guild_settings"]
+        mod.P = db["easyjoin_panels"]
     return cog
 
 
@@ -59,6 +61,7 @@ def make_interaction(member, guild=None):
     interaction = MagicMock()
     interaction.user = member
     interaction.guild = guild
+    interaction.channel_id = 555
     interaction.response.send_message = AsyncMock()
     interaction.response.send_modal = AsyncMock()
     interaction.response.defer = AsyncMock()
@@ -784,5 +787,125 @@ def test_invite_autocomplete_only_invited_groups():
         result = asyncio.run(cog.invite_autocomplete(interaction, ""))
         names = [c.name for c in result]
         assert names == ["SecretGroup"]
+    finally:
+        client.close()
+
+
+@skip
+def test_easyjoin_rejects_invite_only():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        res = db["summon_roles"].insert_one(make_summon(rid=1, canjoin="invited"))
+        member = make_member(uid=100, manage_roles=True)
+        interaction = make_interaction(member)
+        interaction.guild = make_guild()
+        asyncio.run(cog.easyjoin.callback(cog, interaction, str(res.inserted_id)))
+        msg = interaction.response.send_message.await_args.args[0]
+        assert "anyone can join" in msg.lower()
+    finally:
+        client.close()
+
+
+@skip
+def test_easyjoin_posts_panel_and_stores_panel():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        res = db["summon_roles"].insert_one(make_summon(rid=1, canjoin="anyone"))
+        member = make_member(uid=100, manage_roles=True)
+        interaction = make_interaction(member)
+        guild = make_guild()
+        interaction.guild = guild
+        msg = MagicMock()
+        msg.id = 777
+        interaction.response.send_message = AsyncMock(return_value=msg)
+        asyncio.run(cog.easyjoin.callback(cog, interaction, str(res.inserted_id)))
+        interaction.response.send_message.assert_awaited_once()
+        panel = db["easyjoin_panels"].find_one({"summon_id": str(res.inserted_id)})
+        assert panel is not None
+        assert panel["message_id"] == 777
+    finally:
+        client.close()
+
+
+@skip
+def test_easyjoin_toggle_join_and_leave():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        res = db["summon_roles"].insert_one(make_summon(rid=1, canjoin="anyone", creator_id=42))
+        member = make_member(uid=200)
+        interaction = make_interaction(member)
+        interaction.guild = make_guild()
+        interaction.response.send_message = AsyncMock()
+        asyncio.run(cog.easyjoin_toggle(interaction, str(res.inserted_id), join=True))
+        doc = db["summon_roles"].find_one({"_id": res.inserted_id})
+        assert 200 in doc["members"]
+        asyncio.run(cog.easyjoin_toggle(interaction, str(res.inserted_id), join=False))
+        doc = db["summon_roles"].find_one({"_id": res.inserted_id})
+        assert 200 not in doc["members"]
+    finally:
+        client.close()
+
+
+@skip
+def test_easyjoin_join_denied_if_banned():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        res = db["summon_roles"].insert_one(make_summon(rid=1, canjoin="anyone", banned=[200]))
+        member = make_member(uid=200)
+        interaction = make_interaction(member)
+        interaction.guild = make_guild()
+        interaction.response.send_message = AsyncMock()
+        asyncio.run(cog.easyjoin_toggle(interaction, str(res.inserted_id), join=True))
+        doc = db["summon_roles"].find_one({"_id": res.inserted_id})
+        assert 200 not in doc["members"]
+    finally:
+        client.close()
+
+
+@skip
+def test_easyjoin_autocomplete_only_open_groups():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        db["summon_roles"].insert_many(
+            [
+                make_summon(rid=1, name="OpenGroup", canjoin="anyone"),
+                make_summon(rid=2, name="SecretGroup", canjoin="invited"),
+            ]
+        )
+        guild = make_guild()
+        interaction = MagicMock()
+        interaction.guild = guild
+        result = asyncio.run(cog.easyjoin_autocomplete(interaction, ""))
+        names = [c.name for c in result]
+        assert names == ["OpenGroup"]
+    finally:
+        client.close()
+
+
+@skip
+def test_easyjoin_toggle_updates_panel():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        res = db["summon_roles"].insert_one(make_summon(rid=1, canjoin="anyone", creator_id=42))
+        db["easyjoin_panels"].insert_one({"guild_id": 1, "summon_id": str(res.inserted_id), "channel_id": 555, "message_id": 777})
+        member = make_member(uid=200)
+        interaction = make_interaction(member)
+        guild = make_guild()
+        channel = MagicMock()
+        fetched = MagicMock()
+        fetched.edit = AsyncMock()
+        channel.fetch_message = AsyncMock(return_value=fetched)
+        guild.get_channel.return_value = channel
+        interaction.guild = guild
+        interaction.response.send_message = AsyncMock()
+        asyncio.run(cog.easyjoin_toggle(interaction, str(res.inserted_id), join=True))
+        channel.fetch_message.assert_awaited_once()
+        fetched.edit.assert_awaited_once()
     finally:
         client.close()

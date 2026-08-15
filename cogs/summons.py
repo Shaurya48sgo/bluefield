@@ -11,6 +11,7 @@ from cogs.common import (
     AS,
     AL,
     BL,
+    P,
     S,
     CANJOIN_CHOICES,
     CANPING_CHOICES,
@@ -55,6 +56,21 @@ class MembersButton(discord.ui.View):
         embed.description = (" ".join(names)) if names else "No members yet."
         embed.set_footer(text=f"{len(member_ids)} members")
         await interaction.response.send_message(embed=embed)
+
+
+class EasyJoinView(discord.ui.View):
+    def __init__(self, cog, summon_id):
+        super().__init__(timeout=None)
+        self.cog = cog
+        self.summon_id = str(summon_id)
+
+    @discord.ui.button(label="✅ Join", style=discord.ButtonStyle.success, custom_id="easyjoin_join")
+    async def join_button(self, interaction, button):
+        await self.cog.easyjoin_toggle(interaction, self.summon_id, join=True)
+
+    @discord.ui.button(label="❌ Leave", style=discord.ButtonStyle.danger, custom_id="easyjoin_leave")
+    async def leave_button(self, interaction, button):
+        await self.cog.easyjoin_toggle(interaction, self.summon_id, join=False)
 
 
 class RenameModal(discord.ui.Modal):
@@ -487,6 +503,127 @@ class SummonsCog(commands.Cog):
             if len(out) >= 25:
                 break
         return out
+
+    async def easyjoin_autocomplete(self, interaction, current):
+        docs = S.find({"guild_id": interaction.guild.id, "enabled": True, "canjoin": "anyone"})
+        out = []
+        for d in docs:
+            if current.lower() in d["name"].lower():
+                out.append(app_commands.Choice(name=d["name"], value=str(d["_id"])))
+            if len(out) >= 25:
+                break
+        return out
+
+    # ---------- slash: group easyjoin ----------
+
+    group = app_commands.Group(name="group", description="Group tools")
+
+    @group.command(name="easyjoin")
+    @app_commands.describe(summon="The open-join summon to create buttons for")
+    @app_commands.autocomplete(summon=easyjoin_autocomplete)
+    async def easyjoin(self, interaction, summon: str):
+        """Post a Join/Leave button panel for an open-join summon."""
+        doc = self._resolve(interaction.guild.id, summon)
+        if not doc:
+            await interaction.response.send_message("That summon doesn't exist.")
+            return
+        if doc.get("canjoin") != "anyone":
+            await interaction.response.send_message(
+                "Easyjoin only works for summons that anyone can join."
+            )
+            return
+        if not doc.get("enabled", True):
+            await interaction.response.send_message("That summon is disabled.")
+            return
+        view = EasyJoinView(self, str(doc["_id"]))
+        msg = await interaction.response.send_message(
+            embed=self._easyjoin_embed(interaction.guild, doc),
+            view=view,
+        )
+        P.insert_one(
+            {
+                "guild_id": interaction.guild.id,
+                "summon_id": str(doc["_id"]),
+                "channel_id": interaction.channel_id,
+                "message_id": msg.id,
+                "created_at": datetime.now(timezone.utc),
+            }
+        )
+        audit(interaction.guild.id, interaction.user.id, "easyjoin", "summon", str(doc["_id"]), doc["name"])
+
+    def _easyjoin_embed(self, guild, doc):
+        member_count = len([uid for uid in doc.get("members", []) if guild.get_member(uid)])
+        embed = discord.Embed(
+            title=f"🎮 {doc['name']}",
+            description=f"👥 **{member_count}** members\nClick **Join** to join or **Leave** to leave.",
+            color=discord.Colour(doc.get("color", 0)),
+        )
+        return embed
+
+    async def easyjoin_toggle(self, interaction, summon_id, join: bool):
+        doc = S.find_one({"_id": ObjectId(summon_id), "guild_id": interaction.guild.id})
+        if not doc:
+            await interaction.response.send_message("This summon no longer exists.")
+            return
+        member = interaction.user
+        if join:
+            if doc.get("canjoin") != "anyone":
+                await interaction.response.send_message("This summon is no longer open to join.")
+                return
+            if member.id in doc.get("banned", []):
+                await interaction.response.send_message("You're banned from this summon.")
+                return
+            if member.id in doc.get("members", []):
+                await interaction.response.send_message("You're already in this summon.")
+                return
+            S.update_one({"_id": doc["_id"]}, {"$addToSet": {"members": member.id}})
+            doc = S.find_one({"_id": doc["_id"]})
+            if doc.get("real_role_id"):
+                role = interaction.guild.get_role(doc["real_role_id"])
+                if role:
+                    try:
+                        await member.add_roles(role, reason=f"Easyjoin {doc['name']}")
+                    except Exception:
+                        pass
+            audit(interaction.guild.id, member.id, "easyjoin_join", "summon", summon_id, doc["name"])
+            reply = f"✅ Joined **{doc['name']}**!"
+        else:
+            if member.id not in doc.get("members", []):
+                await interaction.response.send_message("You're not in this summon.")
+                return
+            S.update_one({"_id": doc["_id"]}, {"$pull": {"members": member.id}})
+            doc = S.find_one({"_id": doc["_id"]})
+            if doc.get("real_role_id"):
+                role = interaction.guild.get_role(doc["real_role_id"])
+                if role:
+                    try:
+                        await member.remove_roles(role, reason=f"Easyleave {doc['name']}")
+                    except Exception:
+                        pass
+            audit(interaction.guild.id, member.id, "easyjoin_leave", "summon", summon_id, doc["name"])
+            reply = f"👋 Left **{doc['name']}**!"
+        await self.refresh_member_embed(interaction.guild, doc)
+        try:
+            await self.update_easyjoin_panel(interaction.guild, summon_id)
+        except Exception:
+            pass
+        await interaction.response.send_message(reply, ephemeral=True)
+
+    async def update_easyjoin_panel(self, guild, summon_id):
+        panels = list(P.find({"guild_id": guild.id, "summon_id": summon_id}))
+        doc = S.find_one({"_id": ObjectId(summon_id)})
+        if not doc:
+            return
+        embed = self._easyjoin_embed(guild, doc)
+        for panel in panels:
+            channel = guild.get_channel(panel["channel_id"])
+            if not channel:
+                continue
+            try:
+                msg = await channel.fetch_message(panel["message_id"])
+                await msg.edit(embed=embed)
+            except Exception:
+                pass
 
     # ---------- slash: summon ----------
 
