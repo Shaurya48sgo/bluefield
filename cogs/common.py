@@ -2,10 +2,12 @@ import os
 import random
 import string
 
+from discord.ext import commands
 from pymongo import MongoClient
 
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
-DEFAULT_PREFIX = "!?"
+DEFAULT_PREFIX = "I?"
+OWNER_ID = os.getenv("OWNER_ID")
 
 _client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=3000)
 _db = _client["bluefield"]
@@ -121,9 +123,53 @@ def is_admin(member):
     return bool(member.guild_permissions.administrator or member.guild_permissions.manage_roles)
 
 
+def is_owner(user_id):
+    return bool(OWNER_ID) and str(user_id) == str(OWNER_ID)
+
+
+def get_dev_ids(guild_id):
+    return get_guild_settings(guild_id).get("dev_ids", [])
+
+
+def is_dev(guild_id, user_id):
+    return user_id in get_dev_ids(guild_id)
+
+
+def is_owner_or_dev(guild_id, user_id):
+    return is_owner(user_id) or is_dev(guild_id, user_id)
+
+
+def is_privileged(member):
+    if is_admin(member):
+        return True
+    try:
+        return is_owner_or_dev(member.guild.id, member.id)
+    except Exception:
+        return is_owner(member.id)
+
+
+def has_admin_or_dev():
+    async def predicate(ctx):
+        if is_owner(ctx.author.id):
+            return True
+        if ctx.guild and is_dev(ctx.guild.id, ctx.author.id):
+            return True
+        return is_admin(ctx.author)
+
+    return commands.check(predicate)
+
+
 def is_blacklisted(guild_id, user_id, member=None):
-    if member is not None and is_admin(member):
-        return False
+    if member is not None:
+        if is_owner(member.id):
+            return False
+        try:
+            if is_dev(guild_id, member.id):
+                return False
+        except Exception:
+            pass
+        if is_admin(member):
+            return False
     try:
         return BL.find_one({"guild_id": guild_id, "user_id": user_id}) is not None
     except Exception:

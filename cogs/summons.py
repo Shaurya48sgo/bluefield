@@ -17,8 +17,10 @@ from cogs.common import (
     CANPING_CHOICES,
     audit,
     get_guild_settings,
+    has_admin_or_dev,
     is_admin,
     is_blacklisted,
+    is_privileged,
     parse_mentions,
 )
 
@@ -71,6 +73,10 @@ class EasyJoinView(discord.ui.View):
     @discord.ui.button(label="❌ Leave", style=discord.ButtonStyle.danger, custom_id="easyjoin_leave")
     async def leave_button(self, interaction, button):
         await self.cog.easyjoin_toggle(interaction, self.summon_id, join=False)
+
+    @discord.ui.button(label="⏹️ Expire", style=discord.ButtonStyle.secondary, custom_id="easyjoin_expire")
+    async def expire_button(self, interaction, button):
+        await self.cog.easyjoin_expire(interaction, self.summon_id)
 
 
 class RenameModal(discord.ui.Modal):
@@ -185,6 +191,8 @@ class EditSummonView(discord.ui.View):
         value = self.canjoin_select.values[0]
         S.update_one({"_id": ObjectId(self.summon_id)}, {"$set": {"canjoin": value}})
         audit(self.guild_id, interaction.user.id, "edit", "summon", self.summon_id, f"canjoin -> {value}")
+        if value != "anyone":
+            await self.cog.close_easyjoin_panels(interaction.guild, self.summon_id)
         await self._refresh(interaction, f"✅ Join setting updated to **{value}**.")
 
     async def on_canping(self, interaction):
@@ -230,6 +238,7 @@ class DeleteConfirmView(discord.ui.View):
         audit(interaction.guild.id, interaction.user.id, "delete", "summon", str(self.summon["_id"]), self.summon.get("name"))
         await interaction.response.send_message(msg)
         await self.cog.delete_member_embed(interaction.guild, embed_id)
+        await self.cog.close_easyjoin_panels(interaction.guild, str(self.summon["_id"]))
 
     @discord.ui.button(label="Yes, delete", style=discord.ButtonStyle.danger)
     async def yes_button(self, interaction, button):
@@ -272,7 +281,7 @@ class SummonsCog(commands.Cog):
         )
 
     def _can_summon(self, member, doc):
-        if is_admin(member):
+        if is_privileged(member):
             return True
         if doc.get("enabled", True) is False:
             return False
@@ -288,7 +297,7 @@ class SummonsCog(commands.Cog):
         return False
 
     def _can_invite(self, member, doc):
-        if is_admin(member):
+        if is_privileged(member):
             return True
         if doc.get("creator_id") == member.id or member.id in doc.get("co_owner_ids", []):
             return True
@@ -302,7 +311,7 @@ class SummonsCog(commands.Cog):
         return False
 
     def _can_manage(self, member, doc):
-        return is_admin(member) or doc.get("creator_id") == member.id
+        return is_privileged(member) or doc.get("creator_id") == member.id
 
     def _count_created(self, guild_id, creator_id):
         return S.count_documents({"guild_id": guild_id, "creator_id": creator_id})
@@ -546,6 +555,7 @@ class SummonsCog(commands.Cog):
                 "summon_id": str(doc["_id"]),
                 "channel_id": interaction.channel_id,
                 "message_id": msg.id,
+                "created_by": interaction.user.id,
                 "created_at": datetime.now(timezone.utc),
             }
         )
@@ -613,6 +623,10 @@ class SummonsCog(commands.Cog):
         panels = list(P.find({"guild_id": guild.id, "summon_id": summon_id}))
         doc = S.find_one({"_id": ObjectId(summon_id)})
         if not doc:
+            await self.close_easyjoin_panels(guild, summon_id)
+            return
+        if doc.get("canjoin") != "anyone":
+            await self.close_easyjoin_panels(guild, summon_id)
             return
         embed = self._easyjoin_embed(guild, doc)
         for panel in panels:
@@ -625,9 +639,62 @@ class SummonsCog(commands.Cog):
             except Exception:
                 pass
 
+    async def close_easyjoin_panels(self, guild, summon_id):
+        panels = list(P.find({"guild_id": guild.id, "summon_id": summon_id}))
+        for panel in panels:
+            channel = guild.get_channel(panel["channel_id"])
+            if channel:
+                try:
+                    msg = await channel.fetch_message(panel["message_id"])
+                    embed = msg.embeds[0] if msg.embeds else None
+                    closed = discord.Embed(
+                        title=f"🔒 {embed.title if embed else 'Panel'}",
+                        description="This panel is closed — the summon is no longer open to join.",
+                        color=discord.Color.dark_grey(),
+                    )
+                    await msg.edit(embed=closed, view=None)
+                except Exception:
+                    pass
+            P.delete_one({"_id": panel["_id"]})
+
+    async def easyjoin_expire(self, interaction, summon_id):
+        doc = S.find_one({"_id": ObjectId(summon_id), "guild_id": interaction.guild.id})
+        panel = P.find_one(
+            {"guild_id": interaction.guild.id, "summon_id": summon_id, "message_id": interaction.message.id}
+        )
+        if not panel:
+            await interaction.response.send_message("This panel is already closed.")
+            return
+        allowed = is_privileged(interaction.user)
+        if doc:
+            allowed = allowed or doc.get("creator_id") == interaction.user.id or interaction.user.id in doc.get("co_owner_ids", [])
+        if panel.get("created_by") == interaction.user.id:
+            allowed = True
+        if not allowed:
+            await interaction.response.send_message(
+                "Only the summon owner, co-owners, admins, or the panel creator can close this."
+            )
+            return
+        P.delete_one({"_id": panel["_id"]})
+        try:
+            msg = await interaction.channel.fetch_message(interaction.message.id)
+            embed = msg.embeds[0] if msg.embeds else None
+            closed = discord.Embed(
+                title=f"🔒 {embed.title if embed else 'Panel'}",
+                description="This panel was closed by " + interaction.user.mention,
+                color=discord.Color.dark_grey(),
+            )
+            await msg.edit(embed=closed, view=None)
+        except Exception:
+            pass
+        audit(interaction.guild.id, interaction.user.id, "easyjoin_expire", "summon", summon_id)
+        await interaction.response.send_message("Panel closed.", ephemeral=True)
+
     # ---------- slash: summon ----------
 
     def _can_summon_real(self, member, role):
+        if is_privileged(member):
+            return True
         doc = AS.find_one({"guild_id": member.guild.id, "role_id": role.id})
         if not doc:
             return False
@@ -657,7 +724,7 @@ class SummonsCog(commands.Cog):
                 "You are blacklisted from summon commands."
             )
             return
-        if not is_admin(member):
+        if not is_privileged(member):
             now = datetime.now(timezone.utc).timestamp()
             last = self.last_summon.get(member.id, 0)
             if now - last < SUMMON_COOLDOWN:
@@ -753,7 +820,7 @@ class SummonsCog(commands.Cog):
                 "A summon with that name already exists."
             )
             return
-        if not is_admin(member):
+        if not is_privileged(member):
             limit = get_guild_settings(interaction.guild.id).get("max_groups_per_member", MAX_FREE_ROLES)
             if self._count_created(interaction.guild.id, member.id) >= limit:
                 await interaction.response.send_message(
@@ -848,6 +915,7 @@ class SummonsCog(commands.Cog):
             audit(interaction.guild.id, interaction.user.id, "delete", "summon", str(doc["_id"]), doc["name"])
             await interaction.response.send_message(msg)
             await self.delete_member_embed(interaction.guild, doc.get("member_embed_id"))
+            await self.close_easyjoin_panels(interaction.guild, str(doc["_id"]))
 
     # ---------- slash: join / leave / invite / ban ----------
 
@@ -1072,12 +1140,12 @@ class SummonsCog(commands.Cog):
     # ---------- prefix: allow (real role grant) ----------
 
     @commands.group(name="allow", invoke_without_command=True)
-    @commands.has_permissions(administrator=True)
+    @has_admin_or_dev()
     async def allow(self, ctx):
         await ctx.send("Usage: `!?allow summon @role`")
 
     @allow.command(name="summon")
-    @commands.has_permissions(administrator=True)
+    @has_admin_or_dev()
     async def allow_summon(self, ctx, role: discord.Role):
         doc = AS.find_one({"guild_id": ctx.guild.id, "role_id": role.id})
         if not doc:
@@ -1089,7 +1157,7 @@ class SummonsCog(commands.Cog):
         )
 
     @commands.group(name="summon", invoke_without_command=True)
-    @commands.has_permissions(administrator=True)
+    @has_admin_or_dev()
     async def summon_prefix(self, ctx):
         """Admin prefix commands to manage summons."""
         await ctx.send(
@@ -1101,7 +1169,7 @@ class SummonsCog(commands.Cog):
         )
 
     @summon_prefix.command(name="create")
-    @commands.has_permissions(administrator=True)
+    @has_admin_or_dev()
     async def summon_prefix_create(self, ctx, name: str, canping: str = "anyone_joined", canjoin: str = "anyone"):
         """Create a summon (admin)."""
         canping = canping.lower()
@@ -1141,7 +1209,7 @@ class SummonsCog(commands.Cog):
         await self.refresh_member_embed(ctx.guild, doc)
 
     @summon_prefix.command(name="edit")
-    @commands.has_permissions(administrator=True)
+    @has_admin_or_dev()
     async def summon_prefix_edit(self, ctx, *, summon: str):
         """Edit a summon (admin)."""
         doc = self._resolve(ctx.guild.id, summon)
@@ -1154,7 +1222,7 @@ class SummonsCog(commands.Cog):
         )
 
     @summon_prefix.command(name="delete")
-    @commands.has_permissions(administrator=True)
+    @has_admin_or_dev()
     async def summon_prefix_delete(self, ctx, *, summon: str):
         """Delete a summon (admin)."""
         doc = self._resolve(ctx.guild.id, summon)
@@ -1169,7 +1237,7 @@ class SummonsCog(commands.Cog):
     # ---------- prefix: promote / revoke / logs / audit / purge ----------
 
     @commands.command(name="promote")
-    @commands.has_permissions(administrator=True)
+    @has_admin_or_dev()
     async def promote(self, ctx, user: discord.Member, *, summon: str):
         """Make someone a co-owner of a summon (owner only)."""
         doc = self._resolve(ctx.guild.id, summon)
@@ -1187,7 +1255,7 @@ class SummonsCog(commands.Cog):
         await ctx.send(f"✅ {user.mention} is now a co-owner of **{doc['name']}**.")
 
     @commands.command(name="revoke")
-    @commands.has_permissions(administrator=True)
+    @has_admin_or_dev()
     async def revoke(self, ctx, user: discord.Member, *, summon: str):
         """Remove co-owner status (owner only)."""
         doc = self._resolve(ctx.guild.id, summon)
@@ -1202,7 +1270,7 @@ class SummonsCog(commands.Cog):
         await ctx.send(f"✅ {user.mention} is no longer a co-owner of **{doc['name']}**.")
 
     @commands.command(name="role")
-    @commands.has_permissions(administrator=True)
+    @has_admin_or_dev()
     async def role_cmd(self, ctx, summon: str, flag: str = None):
         """Add (-y) or remove (-r) a real Discord role for a summon."""
         doc = self._resolve(ctx.guild.id, summon)
@@ -1273,7 +1341,7 @@ class SummonsCog(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name="audit")
-    @commands.has_permissions(administrator=True)
+    @has_admin_or_dev()
     async def audit_cmd(self, ctx, limit: int = 15):
         """View recent admin actions (owner/admin)."""
         entries = list(AL.find({"guild_id": ctx.guild.id}).sort("timestamp", -1).limit(limit))
@@ -1291,7 +1359,7 @@ class SummonsCog(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name="purge")
-    @commands.has_permissions(administrator=True)
+    @has_admin_or_dev()
     async def purge(self, ctx):
         """Remove stale summon entries (deleted real roles / missing members)."""
         removed = 0
@@ -1304,7 +1372,7 @@ class SummonsCog(commands.Cog):
     # ---------- prefix: blacklist ----------
 
     @commands.command(name="blacklist")
-    @commands.has_permissions(administrator=True)
+    @has_admin_or_dev()
     async def blacklist(self, ctx, user: discord.Member):
         BL.update_one(
             {"guild_id": ctx.guild.id, "user_id": user.id},
@@ -1315,7 +1383,7 @@ class SummonsCog(commands.Cog):
         await ctx.send(f"⛔ Blacklisted {user.mention} (they can still join).")
 
     @commands.command(name="unblacklist")
-    @commands.has_permissions(administrator=True)
+    @has_admin_or_dev()
     async def unblacklist(self, ctx, user: discord.Member):
         BL.delete_one({"guild_id": ctx.guild.id, "user_id": user.id})
         audit(ctx.guild.id, ctx.author.id, "unblacklist", "user", user.id)

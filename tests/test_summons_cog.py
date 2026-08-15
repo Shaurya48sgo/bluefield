@@ -909,3 +909,72 @@ def test_easyjoin_toggle_updates_panel():
         fetched.edit.assert_awaited_once()
     finally:
         client.close()
+
+
+@skip
+def test_easyjoin_expire_removes_panel():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        res = db["summon_roles"].insert_one(make_summon(rid=1, canjoin="anyone", creator_id=42))
+        db["easyjoin_panels"].insert_one({"guild_id": 1, "summon_id": str(res.inserted_id), "channel_id": 555, "message_id": 777, "created_by": 42})
+        member = make_member(uid=42)
+        interaction = make_interaction(member)
+        guild = make_guild()
+        channel = MagicMock()
+        fetched = MagicMock()
+        fetched.embeds = []
+        fetched.edit = AsyncMock()
+        channel.fetch_message = AsyncMock(return_value=fetched)
+        guild.get_channel.return_value = channel
+        interaction.guild = guild
+        interaction.channel = channel
+        interaction.message = MagicMock()
+        interaction.message.id = 777
+        interaction.response.send_message = AsyncMock()
+        asyncio.run(cog.easyjoin_expire(interaction, str(res.inserted_id)))
+        assert db["easyjoin_panels"].count_documents({"message_id": 777}) == 0
+        interaction.response.send_message.assert_awaited_once()
+    finally:
+        client.close()
+
+
+@skip
+def test_easyjoin_expire_denied_for_stranger():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        res = db["summon_roles"].insert_one(make_summon(rid=1, canjoin="anyone", creator_id=42))
+        db["easyjoin_panels"].insert_one({"guild_id": 1, "summon_id": str(res.inserted_id), "channel_id": 555, "message_id": 777, "created_by": 42})
+        member = make_member(uid=999)
+        interaction = make_interaction(member)
+        guild = make_guild()
+        interaction.guild = guild
+        interaction.message = MagicMock()
+        interaction.message.id = 777
+        interaction.response.send_message = AsyncMock()
+        asyncio.run(cog.easyjoin_expire(interaction, str(res.inserted_id)))
+        assert db["easyjoin_panels"].count_documents({"message_id": 777}) == 1
+    finally:
+        client.close()
+
+
+@skip
+def test_close_easyjoin_panels_on_canjoin_change():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        res = db["summon_roles"].insert_one(make_summon(rid=1, canjoin="anyone"))
+        db["easyjoin_panels"].insert_one({"guild_id": 1, "summon_id": str(res.inserted_id), "channel_id": 555, "message_id": 777})
+        guild = make_guild()
+        channel = MagicMock()
+        fetched = MagicMock()
+        fetched.embeds = []
+        fetched.edit = AsyncMock()
+        channel.fetch_message = AsyncMock(return_value=fetched)
+        guild.get_channel.return_value = channel
+        asyncio.run(cog.close_easyjoin_panels(guild, str(res.inserted_id)))
+        assert db["easyjoin_panels"].count_documents({"summon_id": str(res.inserted_id)}) == 0
+        fetched.edit.assert_awaited_once()
+    finally:
+        client.close()

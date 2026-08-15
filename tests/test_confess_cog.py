@@ -54,7 +54,8 @@ def make_interaction(member, guild=None, channel_id=555):
     interaction.guild = guild
     interaction.channel_id = channel_id
     interaction.response.send_message = AsyncMock()
-    interaction.response.followup = AsyncMock()
+    interaction.response.edit_message = AsyncMock()
+    interaction.followup.send = AsyncMock()
     return interaction
 
 
@@ -148,7 +149,7 @@ def test_say_requires_enabled_channel():
         cog = make_cog(db)
         member = make_member(uid=100)
         interaction = make_interaction(member, channel_id=555)
-        asyncio.run(cog.say.callback(cog, interaction, "TESTCODE", "hello"))
+        asyncio.run(cog.say.callback(cog, interaction, "hello", "TESTCODE"))
         interaction.response.send_message.assert_awaited_once()
         msg = interaction.response.send_message.await_args.args[0]
         assert "enabled" in msg.lower()
@@ -165,7 +166,7 @@ def test_say_wrong_channel_rejected():
         add_code(db, uid=100, code="TESTCODE")
         member = make_member(uid=100)
         interaction = make_interaction(member, channel_id=999)
-        asyncio.run(cog.say.callback(cog, interaction, "TESTCODE", "hello"))
+        asyncio.run(cog.say.callback(cog, interaction, "hello", "TESTCODE"))
         msg = interaction.response.send_message.await_args.args[0]
         assert "only work in" in msg.lower()
     finally:
@@ -181,7 +182,7 @@ def test_say_invalid_code_rejected():
         add_code(db, uid=100, code="TESTCODE")
         member = make_member(uid=100)
         interaction = make_interaction(member, channel_id=555)
-        asyncio.run(cog.say.callback(cog, interaction, "WRONG", "hello"))
+        asyncio.run(cog.say.callback(cog, interaction, "hello", "WRONG"))
         msg = interaction.response.send_message.await_args.args[0]
         assert "invalid code" in msg.lower()
     finally:
@@ -197,7 +198,7 @@ def test_say_success_posts_anonymously():
         add_code(db, uid=100, code="TESTCODE")
         member = make_member(uid=100)
         interaction = make_interaction(member, channel_id=555)
-        asyncio.run(cog.say.callback(cog, interaction, "testcode", "hello world"))
+        asyncio.run(cog.say.callback(cog, interaction, "hello world", "testcode"))
         msg = interaction.response.send_message.await_args.args[0]
         assert "TESTCODE" in msg
         assert "hello world" in msg
@@ -215,7 +216,7 @@ def test_say_blacklisted_rejected():
         add_code(db, uid=100, code="TESTCODE")
         member = make_member(uid=100)
         interaction = make_interaction(member, channel_id=555)
-        asyncio.run(cog.say.callback(cog, interaction, "TESTCODE", "hello"))
+        asyncio.run(cog.say.callback(cog, interaction, "hello", "TESTCODE"))
         msg = interaction.response.send_message.await_args.args[0]
         assert "blacklisted" in msg.lower()
     finally:
@@ -250,5 +251,41 @@ def test_confessdelete_admin():
         ctx.author = make_member(uid=1, manage_roles=True)
         asyncio.run(cog.confessdelete.callback(cog, ctx, "code1"))
         assert db["anon_codes"].count_documents({"guild_id": 1, "code": "CODE1"}) == 0
+    finally:
+        client.close()
+
+
+@skip
+def test_say_auto_generates_first_code():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        db["guild_settings"].insert_one({"guild_id": 1, "confess_channel_id": 555})
+        member = make_member(uid=100)
+        interaction = make_interaction(member, channel_id=555)
+        asyncio.run(cog.say.callback(cog, interaction, "first secret", None))
+        msg = interaction.response.send_message.await_args.args[0]
+        assert "Code" in msg
+        assert "first secret" in msg
+        assert db["anon_codes"].count_documents({"guild_id": 1, "user_id": 100}) == 1
+    finally:
+        client.close()
+
+
+@skip
+def test_say_with_code_uses_given_code():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        db["guild_settings"].insert_one({"guild_id": 1, "confess_channel_id": 555})
+        add_code(db, uid=100, code="CODE1")
+        add_code(db, uid=100, code="CODE2")
+        member = make_member(uid=100)
+        interaction = make_interaction(member, channel_id=555)
+        asyncio.run(cog.say.callback(cog, interaction, "hello", "CODE1"))
+        msg = interaction.response.send_message.await_args.args[0]
+        assert "CODE1" in msg
+        assert "CODE2" not in msg
+        assert db["anon_codes"].count_documents({"guild_id": 1, "user_id": 100}) == 2
     finally:
         client.close()
