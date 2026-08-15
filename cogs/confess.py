@@ -6,6 +6,8 @@ from discord.ext import commands
 
 from cogs.common import (
     C,
+    I,
+    M,
     audit,
     generate_code,
     get_guild_settings,
@@ -15,6 +17,84 @@ from cogs.common import (
 )
 
 DEFAULT_MAX_CODES = 5
+
+
+def _jump_link(guild_id, channel_id, message_id):
+    return f"https://discord.com/channels/{guild_id}/{channel_id}/{message_id}"
+
+
+class SecretReplyModal(discord.ui.Modal):
+    def __init__(self, cog, guild_id, channel_id, code):
+        super().__init__(title=f"Reply to code {code}")
+        self.cog = cog
+        self.guild_id = guild_id
+        self.channel_id = channel_id
+        self.code = code
+        self.text_input = discord.ui.TextInput(
+            label="Your reply",
+            style=discord.TextStyle.paragraph,
+            max_length=2000,
+            required=True,
+        )
+        self.add_item(self.text_input)
+
+    async def on_submit(self, interaction):
+        text = self.text_input.value.strip()
+        if not text:
+            await interaction.response.send_message("Reply cannot be empty.")
+            return
+        await self.cog.post_reply(interaction, self.guild_id, self.channel_id, self.code, text)
+
+
+class SecretReplyButton(discord.ui.Button):
+    def __init__(self, guild_id, channel_id, code):
+        super().__init__(label="Reply", style=discord.ButtonStyle.secondary, custom_id=f"secret_reply:{code}")
+        self.guild_id = guild_id
+        self.channel_id = channel_id
+        self.code = code
+
+    async def callback(self, interaction):
+        await interaction.response.send_modal(SecretReplyModal(self.view.cog, self.guild_id, self.channel_id, self.code))
+
+
+class SecretReplyView(discord.ui.View):
+    def __init__(self, cog, guild_id, channel_id, code):
+        super().__init__(timeout=None)
+        self.cog = cog
+        self.add_item(SecretReplyButton(guild_id, channel_id, code))
+
+
+class InboxView(discord.ui.View):
+    def __init__(self, cog, author, guild_id):
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.author = author
+        self.guild_id = guild_id
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.author.id:
+            await interaction.response.send_message("Not your inbox.")
+            return False
+        return True
+
+    @discord.ui.button(label="Clear inbox", style=discord.ButtonStyle.danger)
+    async def clear_inbox_button(self, interaction, button):
+        query = {"user_id": self.author.id}
+        if self.guild_id:
+            query["guild_id"] = self.guild_id
+        I.delete_many(query)
+        embed = discord.Embed(title="Inbox", description="Inbox cleared.", color=discord.Colour(0x9B59B6))
+        await interaction.response.edit_message(embed=embed, view=None)
+
+    @discord.ui.button(label="Clear chat", style=discord.ButtonStyle.secondary)
+    async def clear_chat_button(self, interaction, button):
+        removed = await self.cog.clear_secret_chat(self.guild_id, self.author.id)
+        embed = discord.Embed(
+            title="Inbox",
+            description=f"Cleared **{removed}** of your secret messages from the channel.",
+            color=discord.Colour(0x9B59B6),
+        )
+        await interaction.response.edit_message(embed=embed)
 
 
 class ConfessCog(commands.Cog):
@@ -112,14 +192,26 @@ class ConfessCog(commands.Cog):
         )
         embed.add_field(name="Code", value=f"**`{code}`**", inline=False)
         embed.add_field(name="Message", value=message, inline=False)
+        view = SecretReplyView(self, gid, channel.id, code)
         try:
-            await channel.send(
+            sent = await channel.send(
                 embed=embed,
+                view=view,
                 allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=False),
             )
         except Exception as e:
             await interaction.response.send_message(f"Failed to post: {e}")
             return
+        M.insert_one(
+            {
+                "guild_id": gid,
+                "channel_id": channel.id,
+                "message_id": sent.id,
+                "code": code,
+                "owner_id": uid,
+                "created_at": datetime.now(timezone.utc),
+            }
+        )
 
         confirm = discord.Embed(
             title="Posted anonymously",
@@ -129,6 +221,62 @@ class ConfessCog(commands.Cog):
             + f" ({len(docs)}/{limit} slots)\nNext time pick a code or 'Generate new' in `/secret say`.",
         )
         await interaction.response.send_message(embed=confirm, ephemeral=True)
+
+    async def post_reply(self, interaction, guild_id, channel_id, code, text):
+        embed = discord.Embed(
+            color=discord.Colour(0x9B59B6),
+            title="Reply",
+        )
+        embed.add_field(name="Code", value=f"**`{code}`**", inline=False)
+        embed.add_field(name="Message", value=text, inline=False)
+        channel = interaction.guild.get_channel(channel_id)
+        if channel is None:
+            await interaction.response.send_message("That channel no longer exists.")
+            return
+        view = SecretReplyView(self, guild_id, channel_id, code)
+        try:
+            sent = await channel.send(
+                embed=embed,
+                view=view,
+                allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=False),
+            )
+        except Exception as e:
+            await interaction.response.send_message(f"Failed to post reply: {e}")
+            return
+        owner = C.find_one({"guild_id": guild_id, "code": code})
+        if owner:
+            I.insert_one(
+                {
+                    "guild_id": guild_id,
+                    "user_id": owner["user_id"],
+                    "code": code,
+                    "channel_id": channel_id,
+                    "message_id": sent.id,
+                    "text": text,
+                    "created_at": datetime.now(timezone.utc),
+                }
+            )
+        audit(guild_id, interaction.user.id, "secret_reply", "code", code)
+        await interaction.response.send_message("Reply posted.", ephemeral=True)
+
+    async def clear_secret_chat(self, guild_id, user_id):
+        removed = 0
+        docs = list(M.find({"guild_id": guild_id, "owner_id": user_id}))
+        for d in docs:
+            guild = self.bot.get_guild(guild_id)
+            if not guild:
+                continue
+            channel = guild.get_channel(d["channel_id"])
+            if not channel:
+                continue
+            try:
+                msg = await channel.fetch_message(d["message_id"])
+                await msg.delete()
+                removed += 1
+            except Exception:
+                pass
+        M.delete_many({"guild_id": guild_id, "owner_id": user_id})
+        return removed
 
     def _new_code(self, guild_id, user_id):
         limit = self._max_codes(guild_id)
@@ -210,6 +358,28 @@ class ConfessCog(commands.Cog):
             return
         audit(interaction.guild.id, interaction.user.id, "code_delete", "code", code)
         await interaction.response.send_message(f"🗑️ Deleted code **`{code}`**.")
+
+    # ---------- slash: /inbox ----------
+
+    @app_commands.command(name="inbox")
+    async def inbox(self, interaction):
+        """Show where your codes were replied to, with jump links."""
+        gid = interaction.guild.id
+        entries = list(I.find({"guild_id": gid, "user_id": interaction.user.id}).sort("created_at", -1).limit(15))
+        embed = discord.Embed(
+            title="Inbox",
+            color=discord.Colour(0x9B59B6),
+            description=f"You have **{len(entries)}** mention(s) on your codes." if entries else "No mentions yet.",
+        )
+        if entries:
+            for e in entries:
+                link = _jump_link(gid, e["channel_id"], e["message_id"])
+                embed.add_field(
+                    name=f"Code `{e['code']}`",
+                    value=f"{e['text'][:200]}\n[Jump to message]({link})",
+                    inline=False,
+                )
+        await interaction.response.send_message(embed=embed, view=InboxView(self, interaction.user, gid))
 
     # ---------- admin: view/delete any code ----------
 

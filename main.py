@@ -5,8 +5,9 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
-from cogs.common import P, get_prefix
+from cogs.common import M, P, get_prefix
 from cogs.summons import EasyJoinView
+from cogs.confess import SecretReplyView
 
 load_dotenv()
 
@@ -45,6 +46,14 @@ async def setup_hook():
     for panel in P.find():
         try:
             bot.add_view(EasyJoinView(bot.cogs["SummonsCog"], panel["summon_id"]), message_id=panel["message_id"])
+        except Exception:
+            pass
+    for sm in M.find():
+        try:
+            bot.add_view(
+                SecretReplyView(bot.cogs["ConfessCog"], sm["guild_id"], sm["channel_id"], sm["code"]),
+                message_id=sm["message_id"],
+            )
         except Exception:
             pass
 

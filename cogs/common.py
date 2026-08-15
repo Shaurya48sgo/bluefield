@@ -18,6 +18,10 @@ BL = _db["blacklist"]
 AL = _db["audit_log"]
 C = _db["anon_codes"]
 P = _db["easyjoin_panels"]
+M = _db["secret_messages"]
+I = _db["inbox"]
+M = _db["secret_messages"]
+I = _db["inbox"]
 
 PREFIX_CACHE = {}
 

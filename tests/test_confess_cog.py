@@ -16,6 +16,8 @@ def make_cog(db):
     db.guild_settings.drop()
     db.audit_log.drop()
     db.blacklist.drop()
+    db.secret_messages.drop()
+    db.inbox.drop()
     cog = ConfessCog(MagicMock())
     cog.bot = MagicMock()
     from cogs import common, confess
@@ -25,6 +27,8 @@ def make_cog(db):
         mod.G = db["guild_settings"]
         mod.AL = db["audit_log"]
         mod.BL = db["blacklist"]
+        mod.M = db["secret_messages"]
+        mod.I = db["inbox"]
     return cog
 
 
@@ -58,7 +62,12 @@ def _make_channel(cid):
     channel = MagicMock()
     channel.id = cid
     channel.mention = f"<#{cid}>"
-    channel.send = AsyncMock()
+    sent = MagicMock()
+    sent.id = cid * 1000 + 1
+    channel.send = AsyncMock(return_value=sent)
+    fetched = MagicMock()
+    fetched.delete = AsyncMock()
+    channel.fetch_message = AsyncMock(return_value=fetched)
     return channel
 
 
@@ -367,5 +376,61 @@ def test_say_generate_new_respects_limit():
         assert db["anon_codes"].count_documents({"guild_id": 1, "user_id": 100}) == 1
         msg = interaction.response.send_message.await_args.args[0]
         assert "limit" in msg.lower()
+    finally:
+        client.close()
+
+
+@skip
+def test_post_reply_creates_inbox_entry_for_owner():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        db["guild_settings"].insert_one({"guild_id": 1, "confess_channel_id": 555})
+        add_code(db, uid=100, code="TESTCODE")
+        member = make_member(uid=200)
+        guild = make_guild()
+        interaction = MagicMock()
+        interaction.user = member
+        interaction.guild = guild
+        interaction.response.send_message = AsyncMock()
+        asyncio.run(cog.post_reply(interaction, 1, 555, "TESTCODE", "hey there"))
+        assert db["inbox"].count_documents({"guild_id": 1, "user_id": 100, "code": "TESTCODE"}) == 1
+        assert db["secret_messages"].count_documents({"guild_id": 1, "code": "TESTCODE"}) == 0  # replies not tracked as owner msg
+        interaction.response.send_message.assert_awaited_once()
+    finally:
+        client.close()
+
+
+@skip
+def test_inbox_shows_entries_with_links():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        db["guild_settings"].insert_one({"guild_id": 1, "confess_channel_id": 555})
+        db["inbox"].insert_one({"guild_id": 1, "user_id": 100, "code": "TESTCODE", "channel_id": 555, "message_id": 888, "text": "hi"})
+        member = make_member(uid=100)
+        interaction = make_interaction(member, channel_id=555)
+        asyncio.run(cog.inbox.callback(cog, interaction))
+        interaction.response.send_message.assert_awaited_once()
+        embed = interaction.response.send_message.await_args.kwargs["embed"]
+        assert "TESTCODE" in embed.fields[0].name
+        assert "discord.com/channels/1/555/888" in embed.fields[0].value
+    finally:
+        client.close()
+
+
+@skip
+def test_clear_secret_chat_removes_own_messages():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        db["secret_messages"].insert_one({"guild_id": 1, "channel_id": 555, "message_id": 900, "code": "TESTCODE", "owner_id": 100})
+        db["secret_messages"].insert_one({"guild_id": 1, "channel_id": 555, "message_id": 901, "code": "OTHER", "owner_id": 200})
+        guild = make_guild()
+        cog.bot.get_guild.return_value = guild
+        removed = asyncio.run(cog.clear_secret_chat(1, 100))
+        assert removed == 1
+        assert db["secret_messages"].count_documents({"owner_id": 100}) == 0
+        assert db["secret_messages"].count_documents({"owner_id": 200}) == 1
     finally:
         client.close()
