@@ -24,11 +24,12 @@ def _jump_link(guild_id, channel_id, message_id):
 
 
 class SecretReplyModal(discord.ui.Modal):
-    def __init__(self, cog, guild_id, channel_id, code):
-        super().__init__(title=f"Reply to code {code}")
+    def __init__(self, cog, guild_id, channel_id, original_code, code):
+        super().__init__(title=f"Reply as code {code}")
         self.cog = cog
         self.guild_id = guild_id
         self.channel_id = channel_id
+        self.original_code = original_code
         self.code = code
         self.text_input = discord.ui.TextInput(
             label="Your reply",
@@ -43,7 +44,33 @@ class SecretReplyModal(discord.ui.Modal):
         if not text:
             await interaction.response.send_message("Reply cannot be empty.")
             return
-        await self.cog.post_reply(interaction, self.guild_id, self.channel_id, self.code, text)
+        await self.cog.post_reply(interaction, self.guild_id, self.channel_id, self.original_code, self.code, text)
+
+
+class ReplyCodeSelectView(discord.ui.View):
+    def __init__(self, cog, author, guild_id, channel_id, original_code, docs):
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.author = author
+        self.guild_id = guild_id
+        self.channel_id = channel_id
+        self.original_code = original_code
+        options = [discord.SelectOption(label=d["code"], value=d["code"]) for d in docs]
+        self.code_select = discord.ui.Select(placeholder="Pick your code", options=options)
+        self.code_select.callback = self.on_select
+        self.add_item(self.code_select)
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.author.id:
+            await interaction.response.send_message("Not your reply.")
+            return False
+        return True
+
+    async def on_select(self, interaction):
+        code = self.code_select.values[0]
+        await interaction.response.send_modal(
+            SecretReplyModal(self.cog, self.guild_id, self.channel_id, self.original_code, code)
+        )
 
 
 class SecretReplyButton(discord.ui.Button):
@@ -54,7 +81,23 @@ class SecretReplyButton(discord.ui.Button):
         self.code = code
 
     async def callback(self, interaction):
-        await interaction.response.send_modal(SecretReplyModal(self.view.cog, self.guild_id, self.channel_id, self.code))
+        docs = list(C.find({"guild_id": self.guild_id, "user_id": interaction.user.id}).sort("created_at", 1))
+        if not docs:
+            await interaction.response.send_message(
+                "You have no codes yet. Create one with `/secret code new`.",
+                ephemeral=True,
+            )
+            return
+        embed = discord.Embed(
+            title="Reply",
+            description="Which code do you want to reply as?",
+            color=discord.Colour(0x9B59B6),
+        )
+        await interaction.response.send_message(
+            embed=embed,
+            view=ReplyCodeSelectView(self.view.cog, interaction.user, self.guild_id, self.channel_id, self.code, docs),
+            ephemeral=True,
+        )
 
 
 class SecretReplyView(discord.ui.View):
@@ -222,7 +265,7 @@ class ConfessCog(commands.Cog):
         )
         await interaction.response.send_message(embed=confirm, ephemeral=True)
 
-    async def post_reply(self, interaction, guild_id, channel_id, code, text):
+    async def post_reply(self, interaction, guild_id, channel_id, original_code, code, text):
         embed = discord.Embed(
             color=discord.Colour(0x9B59B6),
             title="Reply",
@@ -243,13 +286,13 @@ class ConfessCog(commands.Cog):
         except Exception as e:
             await interaction.response.send_message(f"Failed to post reply: {e}")
             return
-        owner = C.find_one({"guild_id": guild_id, "code": code})
+        owner = C.find_one({"guild_id": guild_id, "code": original_code})
         if owner:
             I.insert_one(
                 {
                     "guild_id": guild_id,
                     "user_id": owner["user_id"],
-                    "code": code,
+                    "code": original_code,
                     "channel_id": channel_id,
                     "message_id": sent.id,
                     "text": text,

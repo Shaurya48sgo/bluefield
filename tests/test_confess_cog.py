@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from cogs.confess import ConfessCog
+from cogs.confess import ConfessCog, SecretReplyButton, SecretReplyView
 
 from mongo_helpers import get_test_db, mongo_available
 
@@ -393,7 +393,7 @@ def test_post_reply_creates_inbox_entry_for_owner():
         interaction.user = member
         interaction.guild = guild
         interaction.response.send_message = AsyncMock()
-        asyncio.run(cog.post_reply(interaction, 1, 555, "TESTCODE", "hey there"))
+        asyncio.run(cog.post_reply(interaction, 1, 555, "TESTCODE", "REPLYCODE", "hey there"))
         assert db["inbox"].count_documents({"guild_id": 1, "user_id": 100, "code": "TESTCODE"}) == 1
         assert db["secret_messages"].count_documents({"guild_id": 1, "code": "TESTCODE"}) == 0  # replies not tracked as owner msg
         interaction.response.send_message.assert_awaited_once()
@@ -432,5 +432,30 @@ def test_clear_secret_chat_removes_own_messages():
         assert removed == 1
         assert db["secret_messages"].count_documents({"owner_id": 100}) == 0
         assert db["secret_messages"].count_documents({"owner_id": 200}) == 1
+    finally:
+        client.close()
+
+
+@skip
+def test_reply_button_shows_ephemeral_code_selector():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        add_code(db, uid=100, code="MYCODE")
+        add_code(db, uid=100, code="OTHER")
+        view = SecretReplyView(cog, 1, 555, "ORIGINAL")
+        button = view.children[0]
+        interaction = MagicMock()
+        interaction.user = MagicMock()
+        interaction.user.id = 100
+        interaction.response.send_message = AsyncMock()
+        asyncio.run(button.callback(interaction))
+        interaction.response.send_message.assert_awaited_once()
+        kw = interaction.response.send_message.await_args.kwargs
+        assert kw["ephemeral"] is True
+        select_view = kw["view"]
+        labels = [o.label for o in select_view.code_select.options]
+        assert "MYCODE" in labels
+        assert "OTHER" in labels
     finally:
         client.close()
