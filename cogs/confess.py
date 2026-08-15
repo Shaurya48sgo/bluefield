@@ -54,20 +54,23 @@ class ConfessCog(commands.Cog):
     secret = app_commands.Group(name="secret", description="Anonymous secret chat")
 
     async def code_autocomplete(self, interaction, current):
-        docs = C.find({"guild_id": interaction.guild.id, "user_id": interaction.user.id})
+        gid = interaction.guild.id
+        uid = interaction.user.id
+        docs = list(C.find({"guild_id": gid, "user_id": uid}).sort("created_at", 1))
         out = []
         for d in docs:
             if current.lower() in d["code"].lower():
                 out.append(app_commands.Choice(name=d["code"], value=d["code"]))
-            if len(out) >= 25:
-                break
-        return out
+        limit = self._max_codes(gid)
+        if len(docs) < limit:
+            out.append(app_commands.Choice(name="Generate new", value="GENERATE_NEW"))
+        return out[:25]
 
     @secret.command(name="say")
-    @app_commands.describe(message="The message to post anonymously", code="Your code (pick one, or leave blank for auto)")
+    @app_commands.describe(message="The message to post anonymously", code="Pick one of your codes, or 'Generate new'")
     @app_commands.autocomplete(code=code_autocomplete)
-    async def say(self, interaction, message: str, code: str = None):
-        """Post anonymously. Your first code is auto-created; codes are listed for you."""
+    async def say(self, interaction, message: str, code: str):
+        """Post anonymously using a code (or generate a new one)."""
         channel = self._channel(interaction.guild)
         if channel is None:
             await interaction.response.send_message("Anonymous chat isn't enabled in this server.")
@@ -87,24 +90,28 @@ class ConfessCog(commands.Cog):
         limit = self._max_codes(gid)
         docs = list(C.find({"guild_id": gid, "user_id": uid}).sort("created_at", 1))
 
-        if code:
-            code = code.strip().upper()
-            if not C.find_one({"guild_id": gid, "code": code, "user_id": uid}):
+        code = code.strip().upper()
+        if code == "GENERATE_NEW":
+            if len(docs) >= limit:
                 await interaction.response.send_message(
-                    "Invalid code. Use `/secret code list` to see yours, or leave code blank."
+                    f"You've reached the limit of **{limit}** codes. "
+                    "Delete one first with `/secret code delete <code>`."
                 )
                 return
-        elif docs:
-            code = docs[-1]["code"]
-        else:
             code = self._new_code(gid, uid)
             docs = list(C.find({"guild_id": gid, "user_id": uid}).sort("created_at", 1))
+        elif not C.find_one({"guild_id": gid, "code": code, "user_id": uid}):
+            await interaction.response.send_message(
+                "Invalid code. Pick one of your codes or 'Generate new'."
+            )
+            return
 
         embed = discord.Embed(
             color=discord.Colour(0x9B59B6),
+            title="Secret message",
         )
-        embed.add_field(name="🔑 Code", value=f"```\n{code}\n```", inline=False)
-        embed.add_field(name="💬 Message", value=message, inline=False)
+        embed.add_field(name="Code", value=f"**`{code}`**", inline=False)
+        embed.add_field(name="Message", value=message, inline=False)
         try:
             await channel.send(
                 embed=embed,
@@ -115,11 +122,11 @@ class ConfessCog(commands.Cog):
             return
 
         confirm = discord.Embed(
-            title="🕶️ Posted anonymously",
+            title="Posted anonymously",
             color=discord.Colour(0x9B59B6),
             description=f"Your secret message was posted with code **`{code}`**.\n"
             + ("Your codes: " + ", ".join(f"`{d['code']}`" for d in docs) if docs else "You have no codes.")
-            + f" ({len(docs)}/{limit} slots)\nNext time use `/secret say code:<code> message:...` to pick another.",
+            + f" ({len(docs)}/{limit} slots)\nNext time pick a code or 'Generate new' in `/secret say`.",
         )
         await interaction.response.send_message(embed=confirm, ephemeral=True)
 

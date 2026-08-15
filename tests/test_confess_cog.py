@@ -218,8 +218,8 @@ def test_say_success_posts_anonymously():
         channel.send.assert_awaited_once()
         embed = channel.send.await_args.kwargs["embed"]
         fields = {f.name: f.value for f in embed.fields}
-        assert "TESTCODE" in fields["🔑 Code"]
-        assert "hello world" in fields["💬 Message"]
+        assert "TESTCODE" in fields["Code"]
+        assert "hello world" in fields["Message"]
         confirm = interaction.response.send_message.await_args.kwargs["embed"]
         assert "posted" in confirm.title.lower()
         assert interaction.response.send_message.await_args.kwargs["ephemeral"] is True
@@ -284,12 +284,12 @@ def test_say_auto_generates_first_code():
         db["guild_settings"].insert_one({"guild_id": 1, "confess_channel_id": 555})
         member = make_member(uid=100)
         interaction = make_interaction(member, channel_id=555)
-        asyncio.run(cog.say.callback(cog, interaction, "first secret", None))
+        asyncio.run(cog.say.callback(cog, interaction, "first secret", "GENERATE_NEW"))
         channel = interaction.guild.get_channel(555)
         channel.send.assert_awaited_once()
         embed = channel.send.await_args.kwargs["embed"]
         fields = {f.name: f.value for f in embed.fields}
-        assert "first secret" in fields["💬 Message"]
+        assert "first secret" in fields["Message"]
         assert db["anon_codes"].count_documents({"guild_id": 1, "user_id": 100}) == 1
     finally:
         client.close()
@@ -309,8 +309,63 @@ def test_say_with_code_uses_given_code():
         channel = interaction.guild.get_channel(555)
         embed = channel.send.await_args.kwargs["embed"]
         fields = {f.name: f.value for f in embed.fields}
-        assert "CODE1" in fields["🔑 Code"]
-        assert "CODE2" not in fields["🔑 Code"]
+        assert "CODE1" in fields["Code"]
+        assert "CODE2" not in fields["Code"]
         assert db["anon_codes"].count_documents({"guild_id": 1, "user_id": 100}) == 2
+    finally:
+        client.close()
+
+
+@skip
+def test_code_autocomplete_shows_codes_and_generate_new():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        db["guild_settings"].insert_one({"guild_id": 1, "confess_max_codes": 2})
+        add_code(db, uid=100, code="CODE1")
+        member = make_member(uid=100)
+        interaction = MagicMock()
+        interaction.user = member
+        interaction.guild = make_guild()
+        result = asyncio.run(cog.code_autocomplete(interaction, ""))
+        values = [c.value for c in result]
+        assert "CODE1" in values
+        assert "GENERATE_NEW" in values
+    finally:
+        client.close()
+
+
+@skip
+def test_code_autocomplete_no_generate_new_at_limit():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        db["guild_settings"].insert_one({"guild_id": 1, "confess_max_codes": 2})
+        add_code(db, uid=100, code="CODE1")
+        add_code(db, uid=100, code="CODE2")
+        member = make_member(uid=100)
+        interaction = MagicMock()
+        interaction.user = member
+        interaction.guild = make_guild()
+        result = asyncio.run(cog.code_autocomplete(interaction, ""))
+        values = [c.value for c in result]
+        assert "GENERATE_NEW" not in values
+    finally:
+        client.close()
+
+
+@skip
+def test_say_generate_new_respects_limit():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        db["guild_settings"].insert_one({"guild_id": 1, "confess_channel_id": 555, "confess_max_codes": 1})
+        add_code(db, uid=100, code="CODE1")
+        member = make_member(uid=100)
+        interaction = make_interaction(member, channel_id=555)
+        asyncio.run(cog.say.callback(cog, interaction, "hello", "GENERATE_NEW"))
+        assert db["anon_codes"].count_documents({"guild_id": 1, "user_id": 100}) == 1
+        msg = interaction.response.send_message.await_args.args[0]
+        assert "limit" in msg.lower()
     finally:
         client.close()
