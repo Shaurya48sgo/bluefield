@@ -173,7 +173,7 @@ def _post_title(code, msg, post):
 def _badge(code, msg, post):
     e = discord.Embed(color=_color(code), description=msg)
     e.set_author(name=code)
-    e.set_footer(text=f"Post #{post}")
+    e.set_footer(text=f"-# ||Post #{post}||")
     return e
 
 
