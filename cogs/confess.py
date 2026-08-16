@@ -43,6 +43,17 @@ def build_secret_embed(code, message):
     return embed
 
 
+def build_reply_embed(code, original_code, original_message_id, text):
+    color = code_color(code)
+    desc = (
+        f"Secret code **`{code}`**\n"
+        f"──── Replied to **`{original_code}`** · Message ID `{original_message_id or '?'}` ────\n\n"
+        f"{text}"
+    )
+    embed = discord.Embed(color=color, description=desc)
+    return embed
+
+
 class SecretReplyModal(discord.ui.Modal):
     def __init__(self, cog, guild_id, channel_id, original_code, code, original_message=None):
         super().__init__(title=f"Reply as code {code}")
@@ -283,6 +294,11 @@ class ConfessCog(commands.Cog):
         except Exception as e:
             await interaction.response.send_message(f"Failed to post: {e}")
             return
+        try:
+            embed.set_footer(text=f"Message ID: {sent.id}")
+            await sent.edit(embed=embed)
+        except Exception:
+            pass
         M.insert_one(
             {
                 "guild_id": gid,
@@ -304,8 +320,8 @@ class ConfessCog(commands.Cog):
         await interaction.response.send_message(embed=confirm, ephemeral=True)
 
     async def post_reply(self, interaction, guild_id, channel_id, original_code, code, text, original_message=None):
-        embed = build_secret_embed(code, text)
-        embed.title = f"Reply to {original_code}"
+        original_message_id = getattr(original_message, "id", None) if original_message is not None else None
+        embed = build_reply_embed(code, original_code, original_message_id, text)
         channel = interaction.guild.get_channel(channel_id)
         if channel is None:
             await interaction.response.send_message("That channel no longer exists.")
@@ -323,6 +339,11 @@ class ConfessCog(commands.Cog):
         except Exception as e:
             await interaction.response.send_message(f"Failed to post reply: {e}")
             return
+        try:
+            embed.set_footer(text=f"Message ID: {sent.id}")
+            await sent.edit(embed=embed)
+        except Exception:
+            pass
         owner = C.find_one({"guild_id": guild_id, "code": original_code})
         if owner:
             I.insert_one(

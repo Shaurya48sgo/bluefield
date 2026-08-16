@@ -538,3 +538,48 @@ def test_code_color_deterministic_and_uniform():
     assert code_color("ABC12345").value == code_color("ABC12345").value
     # within a single code, color is uniform (same everywhere)
     assert code_color("ABC12345") == code_color("ABC12345")
+
+
+@skip
+def test_say_adds_message_id_footer():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        db["guild_settings"].insert_one({"guild_id": 1, "confess_channel_id": 555})
+        add_code(db, uid=100, code="TESTCODE")
+        member = make_member(uid=100)
+        interaction = make_interaction(member, channel_id=555)
+        asyncio.run(cog.say.callback(cog, interaction, "hello world", "testcode"))
+        channel = interaction.guild.get_channel(555)
+        sent = channel.send.await_args
+        embed = sent.kwargs["embed"]
+        assert "Message ID" in embed.footer.text
+    finally:
+        client.close()
+
+
+@skip
+def test_reply_embed_shows_codes_and_message_id():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        db["guild_settings"].insert_one({"guild_id": 1, "confess_channel_id": 555})
+        add_code(db, uid=100, code="ORIGCODE")
+        member = make_member(uid=200)
+        guild = make_guild()
+        channel = guild.get_channel(555)
+        interaction = MagicMock()
+        interaction.user = member
+        interaction.guild = guild
+        interaction.response.send_message = AsyncMock()
+        original = MagicMock()
+        original.id = 7000
+        asyncio.run(cog.post_reply(interaction, 1, 555, "ORIGCODE", "REPLYCODE", "hi there", original))
+        embed = channel.send.await_args.kwargs["embed"]
+        assert "REPLYCODE" in embed.description
+        assert "ORIGCODE" in embed.description
+        assert "7000" in embed.description
+        assert "Replied to" in embed.description
+        assert "Message ID" in embed.footer.text
+    finally:
+        client.close()
