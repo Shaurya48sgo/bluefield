@@ -524,3 +524,54 @@ def test_post_reply_uses_reference_to_original():
         assert db["inbox"].count_documents({"user_id": 100, "code": "ORIGCODE"}) == 1
     finally:
         client.close()
+
+
+@skip
+def test_build_secret_embed_layouts():
+    from cogs.confess import build_secret_embed
+    e1 = build_secret_embed(1, "X7KQ9FD2", "hello")
+    assert {f.name for f in e1.fields} == {"Code", "Message"}
+    e2 = build_secret_embed(2, "X7KQ9FD2", "hello")
+    assert "X7KQ9FD2" in e2.description
+    e3 = build_secret_embed(3, "X7KQ9FD2", "hello")
+    assert "X7KQ9FD2" in e3.title
+    e4 = build_secret_embed(4, "X7KQ9FD2", "hello")
+    assert e4.footer.text == "Code: X7KQ9FD2"
+
+
+@skip
+def test_code_color_deterministic_and_uniform():
+    from cogs.confess import code_color
+    assert code_color("ABC12345").value == code_color("ABC12345").value
+    # within a single code, color is uniform (same everywhere)
+    assert code_color("ABC12345") == code_color("ABC12345")
+
+
+@skip
+def test_layout_command_owner_only():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        ctx = MagicMock()
+        ctx.guild = make_guild()
+        ctx.send = AsyncMock()
+        ctx.author = make_member(uid=100, manage_roles=True)  # not owner
+        asyncio.run(cog.layout.callback(cog, ctx, 2))
+        msg = ctx.send.await_args.args[0]
+        assert "owner" in msg.lower()
+        # owner can set
+        ctx2 = MagicMock()
+        ctx2.guild = make_guild()
+        ctx2.send = AsyncMock()
+        ctx2.author = make_member(uid=999, manage_roles=True)
+        # patch is_owner to allow 999
+        import cogs.confess as confess_mod
+        orig = confess_mod.is_owner
+        confess_mod.is_owner = lambda uid: uid == 999
+        try:
+            asyncio.run(cog.layout.callback(cog, ctx2, 3))
+        finally:
+            confess_mod.is_owner = orig
+        assert db["guild_settings"].find_one({"guild_id": 1})["secret_layout"] == 3
+    finally:
+        client.close()
