@@ -13,45 +13,31 @@ from cogs.common import (
     get_guild_settings,
     has_admin_or_dev,
     is_blacklisted,
+    is_owner,
     set_guild_settings,
 )
+from cogs.layouts import REPLY_LAYOUTS, SECRET_LAYOUTS, build_reply, build_secret
 
 DEFAULT_MAX_CODES = 5
-
-SECRET_LAYOUT = 3
 
 
 def _jump_link(guild_id, channel_id, message_id):
     return f"https://discord.com/channels/{guild_id}/{channel_id}/{message_id}"
 
 
-def code_color(code):
-    palette = [
-        0x9B59B6, 0x5865F2, 0x57F287, 0xFEE75C,
-        0xED4245, 0xEB459E, 0xF47F17, 0x00B0F4,
-    ]
-    h = 0x811C9DC5
-    for ch in code:
-        h ^= ord(ch)
-        h = ((h << 5) & 0xFFFFFFFF) + (h >> 27)
-    return discord.Colour(palette[h % len(palette)])
+def _next_post(guild_id):
+    settings = get_guild_settings(guild_id)
+    n = settings.get("secret_post_counter", 0) + 1
+    set_guild_settings(guild_id, secret_post_counter=n)
+    return n
 
 
-def build_secret_embed(code, message):
-    color = code_color(code)
-    embed = discord.Embed(title=f"Secret message · `{code}`", color=color, description=message)
-    return embed
-
-
-def build_reply_embed(code, original_code, original_message_id, text):
-    color = code_color(code)
-    desc = (
-        f"Secret code **`{code}`**\n"
-        f"──── Replied to **`{original_code}`** · Message ID `{original_message_id or '?'}` ────\n\n"
-        f"{text}"
-    )
-    embed = discord.Embed(color=color, description=desc)
-    return embed
+def _layout_index(guild_id, key, default):
+    idx = get_guild_settings(guild_id).get(key, default)
+    try:
+        return int(idx)
+    except Exception:
+        return default
 
 
 class SecretReplyModal(discord.ui.Modal):
@@ -216,6 +202,65 @@ class ConfessCog(commands.Cog):
         audit(ctx.guild.id, ctx.author.id, "settings", "guild", ctx.guild.id, f"confess max codes -> {limit}")
         await ctx.send(f"✅ Max codes per member set to **{limit}**.")
 
+    @commands.command(name="layout")
+    async def layout(self, ctx):
+        """Preview all 20 secret message layouts (owner only)."""
+        if not is_owner(ctx.author.id):
+            await ctx.send("Only the bot owner can view layouts.")
+            return
+        code = "X7KQ9FD2"
+        msg = "Sample secret message to preview this layout."
+        lines = []
+        for i, layout in enumerate(SECRET_LAYOUTS):
+            embed = build_secret(i, code, msg, 42)
+            embed.title = f"Secret Layout {i + 1} · {layout['name']}"
+            await ctx.send(embed=embed)
+            lines.append(f"{i + 1}. {layout['name']}")
+        await ctx.send("Reply with `I?layoutset <n>` to choose a secret layout.")
+
+    @commands.command(name="layoutr")
+    async def layoutr(self, ctx):
+        """Preview all 20 reply layouts (owner only)."""
+        if not is_owner(ctx.author.id):
+            await ctx.send("Only the bot owner can view reply layouts.")
+            return
+        r = "REPLYCODE"
+        t = "ORIGCODE"
+        text = "Sample reply text to preview this layout."
+        lines = []
+        for i, layout in enumerate(REPLY_LAYOUTS):
+            embed = build_reply(i, r, t, 42, text)
+            embed.title = f"Reply Layout {i + 1} · {layout['name']}"
+            await ctx.send(embed=embed)
+            lines.append(f"{i + 1}. {layout['name']}")
+        await ctx.send("Reply with `I?layoutrset <n>` to choose a reply layout.")
+
+    @commands.command(name="layoutset")
+    async def layoutset(self, ctx, num: int = None):
+        """Choose a secret message layout (owner only)."""
+        if not is_owner(ctx.author.id):
+            await ctx.send("Only the bot owner can set layouts.")
+            return
+        if num is None or num < 1 or num > len(SECRET_LAYOUTS):
+            await ctx.send(f"Pick a number 1-{len(SECRET_LAYOUTS)}.")
+            return
+        set_guild_settings(ctx.guild.id, secret_layout=num - 1)
+        audit(ctx.guild.id, ctx.author.id, "settings", "guild", ctx.guild.id, f"secret layout -> {num}")
+        await ctx.send(f"✅ Secret layout set to **{num} · {SECRET_LAYOUTS[num - 1]['name']}**.")
+
+    @commands.command(name="layoutrset")
+    async def layoutrset(self, ctx, num: int = None):
+        """Choose a reply layout (owner only)."""
+        if not is_owner(ctx.author.id):
+            await ctx.send("Only the bot owner can set layouts.")
+            return
+        if num is None or num < 1 or num > len(REPLY_LAYOUTS):
+            await ctx.send(f"Pick a number 1-{len(REPLY_LAYOUTS)}.")
+            return
+        set_guild_settings(ctx.guild.id, reply_layout=num - 1)
+        audit(ctx.guild.id, ctx.author.id, "settings", "guild", ctx.guild.id, f"reply layout -> {num}")
+        await ctx.send(f"✅ Reply layout set to **{num} · {REPLY_LAYOUTS[num - 1]['name']}**.")
+
     # ---------- slash: /secret say ----------
 
     secret = app_commands.Group(name="secret", description="Anonymous secret chat")
@@ -283,7 +328,9 @@ class ConfessCog(commands.Cog):
             )
             return
 
-        embed = build_secret_embed(code, message)
+        post_number = _next_post(gid)
+        layout_idx = _layout_index(gid, "secret_layout", 1)
+        embed = build_secret(layout_idx, code, message, post_number)
         view = SecretReplyView(self, gid, channel.id, code)
         try:
             sent = await channel.send(
@@ -294,11 +341,6 @@ class ConfessCog(commands.Cog):
         except Exception as e:
             await interaction.response.send_message(f"Failed to post: {e}")
             return
-        try:
-            embed.set_footer(text=f"Message ID: {sent.id}")
-            await sent.edit(embed=embed)
-        except Exception:
-            pass
         M.insert_one(
             {
                 "guild_id": gid,
@@ -306,6 +348,7 @@ class ConfessCog(commands.Cog):
                 "message_id": sent.id,
                 "code": code,
                 "owner_id": uid,
+                "post_number": post_number,
                 "created_at": datetime.now(timezone.utc),
             }
         )
@@ -320,8 +363,13 @@ class ConfessCog(commands.Cog):
         await interaction.response.send_message(embed=confirm, ephemeral=True)
 
     async def post_reply(self, interaction, guild_id, channel_id, original_code, code, text, original_message=None):
-        original_message_id = getattr(original_message, "id", None) if original_message is not None else None
-        embed = build_reply_embed(code, original_code, original_message_id, text)
+        target_post = None
+        if original_message is not None:
+            orig = M.find_one({"guild_id": guild_id, "message_id": original_message.id})
+            if orig:
+                target_post = orig.get("post_number")
+        layout_idx = _layout_index(guild_id, "reply_layout", 0)
+        embed = build_reply(layout_idx, code, original_code, target_post, text)
         channel = interaction.guild.get_channel(channel_id)
         if channel is None:
             await interaction.response.send_message("That channel no longer exists.")
@@ -339,11 +387,6 @@ class ConfessCog(commands.Cog):
         except Exception as e:
             await interaction.response.send_message(f"Failed to post reply: {e}")
             return
-        try:
-            embed.set_footer(text=f"Message ID: {sent.id}")
-            await sent.edit(embed=embed)
-        except Exception:
-            pass
         owner = C.find_one({"guild_id": guild_id, "code": original_code})
         if owner:
             I.insert_one(

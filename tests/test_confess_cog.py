@@ -525,23 +525,33 @@ def test_post_reply_uses_reference_to_original():
 
 @skip
 def test_build_secret_embed_layout():
-    from cogs.confess import build_secret_embed
-    e = build_secret_embed("X7KQ9FD2", "hello")
+    from cogs.layouts import build_secret, SECRET_LAYOUTS
+    assert len(SECRET_LAYOUTS) == 20
+    e = build_secret(1, "X7KQ9FD2", "hello", 42)
     assert "X7KQ9FD2" in e.title
     assert e.description == "hello"
-    assert e.fields == []
+
+
+@skip
+def test_build_reply_embed_layout():
+    from cogs.layouts import build_reply, REPLY_LAYOUTS
+    assert len(REPLY_LAYOUTS) == 20
+    e = build_reply(0, "REPLYCODE", "ORIGCODE", 7, "hello")
+    assert "REPLYCODE" in e.description
+    assert "ORIGCODE" in e.description
+    assert "7" in e.description
 
 
 @skip
 def test_code_color_deterministic_and_uniform():
-    from cogs.confess import code_color
+    from cogs.layouts import _color as code_color
     assert code_color("ABC12345").value == code_color("ABC12345").value
     # within a single code, color is uniform (same everywhere)
     assert code_color("ABC12345") == code_color("ABC12345")
 
 
 @skip
-def test_say_adds_message_id_footer():
+def test_say_sets_post_number():
     client, db = get_test_db()
     try:
         cog = make_cog(db)
@@ -550,21 +560,24 @@ def test_say_adds_message_id_footer():
         member = make_member(uid=100)
         interaction = make_interaction(member, channel_id=555)
         asyncio.run(cog.say.callback(cog, interaction, "hello world", "testcode"))
-        channel = interaction.guild.get_channel(555)
-        sent = channel.send.await_args
-        embed = sent.kwargs["embed"]
-        assert "Message ID" in embed.footer.text
+        doc = db["secret_messages"].find_one({"guild_id": 1, "owner_id": 100})
+        assert doc["post_number"] == 1
+        settings = db["guild_settings"].find_one({"guild_id": 1})
+        assert settings["secret_post_counter"] == 1
     finally:
         client.close()
 
 
 @skip
-def test_reply_embed_shows_codes_and_message_id():
+def test_reply_embed_shows_codes_and_post_number():
     client, db = get_test_db()
     try:
         cog = make_cog(db)
         db["guild_settings"].insert_one({"guild_id": 1, "confess_channel_id": 555})
         add_code(db, uid=100, code="ORIGCODE")
+        db["secret_messages"].insert_one(
+            {"guild_id": 1, "channel_id": 555, "message_id": 7000, "code": "ORIGCODE", "owner_id": 100, "post_number": 7}
+        )
         member = make_member(uid=200)
         guild = make_guild()
         channel = guild.get_channel(555)
@@ -578,8 +591,6 @@ def test_reply_embed_shows_codes_and_message_id():
         embed = channel.send.await_args.kwargs["embed"]
         assert "REPLYCODE" in embed.description
         assert "ORIGCODE" in embed.description
-        assert "7000" in embed.description
-        assert "Replied to" in embed.description
-        assert "Message ID" in embed.footer.text
+        assert "7" in embed.description
     finally:
         client.close()
