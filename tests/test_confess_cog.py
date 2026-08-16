@@ -177,8 +177,9 @@ def test_say_success_posts_anonymously():
         channel = interaction.guild.get_channel(555)
         channel.send.assert_awaited_once()
         embed = channel.send.await_args.kwargs["embed"]
-        assert "TESTCODE" in embed.title
+        assert "TESTCODE" in embed.author.name
         assert "hello world" in embed.description
+        assert "Post #1" in embed.footer.text
         confirm = interaction.response.send_message.await_args.kwargs["embed"]
         assert "posted" in confirm.title.lower()
         assert interaction.response.send_message.await_args.kwargs["ephemeral"] is True
@@ -266,8 +267,8 @@ def test_say_with_code_uses_given_code():
         asyncio.run(cog.say.callback(cog, interaction, "hello", "CODE1"))
         channel = interaction.guild.get_channel(555)
         embed = channel.send.await_args.kwargs["embed"]
-        assert "CODE1" in embed.title
-        assert "CODE2" not in embed.title
+        assert "CODE1" in embed.author.name
+        assert "CODE2" not in embed.author.name
         assert db["anon_codes"].count_documents({"guild_id": 1, "user_id": 100}) == 2
     finally:
         client.close()
