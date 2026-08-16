@@ -13,18 +13,12 @@ from cogs.common import (
     get_guild_settings,
     has_admin_or_dev,
     is_blacklisted,
-    is_owner,
     set_guild_settings,
 )
 
 DEFAULT_MAX_CODES = 5
 
-SECRET_LAYOUTS = {
-    1: "Fields",
-    2: "Description stack",
-    3: "Title code",
-    4: "Minimal footer",
-}
+SECRET_LAYOUT = 3
 
 
 def _jump_link(guild_id, channel_id, message_id):
@@ -43,25 +37,10 @@ def code_color(code):
     return discord.Colour(palette[h % len(palette)])
 
 
-def build_secret_embed(layout, code, message):
+def build_secret_embed(code, message):
     color = code_color(code)
-    layout = layout or 1
-    if layout == 2:
-        embed = discord.Embed(title="Secret message", color=color, description=f"**`{code}`**\n\n{message}")
-    elif layout == 3:
-        embed = discord.Embed(title=f"Secret message · `{code}`", color=color, description=message)
-    elif layout == 4:
-        embed = discord.Embed(color=color, description=message)
-        embed.set_footer(text=f"Code: {code}")
-    else:
-        embed = discord.Embed(title="Secret message", color=color)
-        embed.add_field(name="Code", value=f"**`{code}`**", inline=False)
-        embed.add_field(name="Message", value=message, inline=False)
+    embed = discord.Embed(title=f"Secret message · `{code}`", color=color, description=message)
     return embed
-
-
-def get_secret_layout(guild_id):
-    return get_guild_settings(guild_id).get("secret_layout", 1)
 
 
 class SecretReplyModal(discord.ui.Modal):
@@ -226,36 +205,6 @@ class ConfessCog(commands.Cog):
         audit(ctx.guild.id, ctx.author.id, "settings", "guild", ctx.guild.id, f"confess max codes -> {limit}")
         await ctx.send(f"✅ Max codes per member set to **{limit}**.")
 
-    @commands.command(name="layouts")
-    async def layouts(self, ctx):
-        """Show secret message layout designs (owner only)."""
-        if not is_owner(ctx.author.id):
-            await ctx.send("Only the bot owner can view layouts.")
-            return
-        sample_code = "X7KQ9FD2"
-        sample_msg = "This is a sample secret message so you can preview the layout."
-        message = await ctx.send("Loading layouts...")
-        for num in range(1, 5):
-            embed = build_secret_embed(num, sample_code, sample_msg)
-            embed.set_author(name=f"Layout {num} · {SECRET_LAYOUTS[num]}")
-            await message.edit(embed=embed, view=None)
-            await ctx.send(embed=embed)
-        await message.delete()
-        await ctx.send("Reply with the number of the layout you like, e.g. `I?layout 2`")
-
-    @commands.command(name="layout")
-    async def layout(self, ctx, num: int = None):
-        """Set the secret message layout (owner only)."""
-        if not is_owner(ctx.author.id):
-            await ctx.send("Only the bot owner can set the layout.")
-            return
-        if num not in SECRET_LAYOUTS:
-            await ctx.send(f"Invalid layout. Choose one of: {', '.join(f'{n} ({name})' for n, name in SECRET_LAYOUTS.items())}")
-            return
-        set_guild_settings(ctx.guild.id, secret_layout=num)
-        audit(ctx.guild.id, ctx.author.id, "settings", "guild", ctx.guild.id, f"secret layout -> {num}")
-        await ctx.send(f"✅ Secret message layout set to **{num} ({SECRET_LAYOUTS[num]})**.")
-
     # ---------- slash: /secret say ----------
 
     secret = app_commands.Group(name="secret", description="Anonymous secret chat")
@@ -323,8 +272,7 @@ class ConfessCog(commands.Cog):
             )
             return
 
-        layout = get_secret_layout(gid)
-        embed = build_secret_embed(layout, code, message)
+        embed = build_secret_embed(code, message)
         view = SecretReplyView(self, gid, channel.id, code)
         try:
             sent = await channel.send(
@@ -356,8 +304,7 @@ class ConfessCog(commands.Cog):
         await interaction.response.send_message(embed=confirm, ephemeral=True)
 
     async def post_reply(self, interaction, guild_id, channel_id, original_code, code, text, original_message=None):
-        layout = get_secret_layout(guild_id)
-        embed = build_secret_embed(layout, code, text)
+        embed = build_secret_embed(code, text)
         embed.title = f"Reply to {original_code}"
         channel = interaction.guild.get_channel(channel_id)
         if channel is None:

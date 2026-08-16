@@ -94,8 +94,6 @@ class HelpView(discord.ui.View):
                     (f"{self.prefix}confesschannel", "Run IN a channel to make it the anonymous chat channel."),
                     (f"{self.prefix}groupmax <n>", "Set max groups per member."),
                     (f"{self.prefix}confessmax <n>", "Set max codes per member."),
-                    (f"{self.prefix}layouts", "Preview secret message layouts (owner)."),
-                    (f"{self.prefix}layout <n>", "Choose a secret message layout (owner)."),
                     (f"{self.prefix}dev <@user> -y|-r", "Add/remove a dev (owner/server owner only). Devs have owner powers except managing devs."),
                     (f"{self.prefix}purge", "Clean up stale summon entries."),
                     (f"{self.prefix}prefix_now <new prefix>", "Change the bot's prefix (owner only)."),
