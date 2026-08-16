@@ -5,11 +5,11 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
+load_dotenv()
+
 from cogs.common import M, P, get_prefix
 from cogs.summons import EasyJoinView
 from cogs.confess import SecretReplyView
-
-load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 OWNER_ID = os.getenv("OWNER_ID")
