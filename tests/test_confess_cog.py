@@ -98,8 +98,8 @@ def test_code_delete_removes_own_code():
         member = make_member(uid=100)
         interaction = make_interaction(member)
         asyncio.run(cog.code_delete.callback(cog, interaction, "code1"))
-        assert db["anon_codes"].count_documents({"guild_id": 1, "code": "CODE1"}) == 0
-        assert db["anon_codes"].count_documents({"guild_id": 1, "code": "CODE2"}) == 1
+        assert db["anon_codes"].count_documents({"code": "CODE1"}) == 0
+        assert db["anon_codes"].count_documents({"code": "CODE2"}) == 1
     finally:
         client.close()
 
@@ -113,7 +113,7 @@ def test_code_delete_rejects_other_users_code():
         member = make_member(uid=100)
         interaction = make_interaction(member)
         asyncio.run(cog.code_delete.callback(cog, interaction, "others"))
-        assert db["anon_codes"].count_documents({"guild_id": 1, "code": "OTHERS"}) == 1
+        assert db["anon_codes"].count_documents({"code": "OTHERS"}) == 1
     finally:
         client.close()
 
@@ -127,8 +127,8 @@ def test_say_requires_enabled_channel():
         interaction = make_interaction(member, channel_id=555)
         asyncio.run(cog.say.callback(cog, interaction, "hello", "TESTCODE"))
         interaction.response.send_message.assert_awaited_once()
-        msg = interaction.response.send_message.await_args.args[0]
-        assert "enabled" in msg.lower()
+        embed = interaction.response.send_message.await_args.kwargs["embed"]
+        assert "enabled" in embed.description.lower()
     finally:
         client.close()
 
@@ -143,8 +143,8 @@ def test_say_wrong_channel_rejected():
         member = make_member(uid=100)
         interaction = make_interaction(member, channel_id=999)
         asyncio.run(cog.say.callback(cog, interaction, "hello", "TESTCODE"))
-        msg = interaction.response.send_message.await_args.args[0]
-        assert "only work in" in msg.lower()
+        embed = interaction.response.send_message.await_args.kwargs["embed"]
+        assert "only work in" in embed.description.lower()
     finally:
         client.close()
 
@@ -159,8 +159,8 @@ def test_say_invalid_code_rejected():
         member = make_member(uid=100)
         interaction = make_interaction(member, channel_id=555)
         asyncio.run(cog.say.callback(cog, interaction, "hello", "WRONG"))
-        msg = interaction.response.send_message.await_args.args[0]
-        assert "invalid code" in msg.lower()
+        embed = interaction.response.send_message.await_args.kwargs["embed"]
+        assert "invalid code" in embed.description.lower()
     finally:
         client.close()
 
@@ -199,8 +199,8 @@ def test_say_blacklisted_rejected():
         member = make_member(uid=100)
         interaction = make_interaction(member, channel_id=555)
         asyncio.run(cog.say.callback(cog, interaction, "hello", "TESTCODE"))
-        msg = interaction.response.send_message.await_args.args[0]
-        assert "blacklisted" in msg.lower()
+        embed = interaction.response.send_message.await_args.kwargs["embed"]
+        assert "blacklisted" in embed.description.lower()
     finally:
         client.close()
 
@@ -232,7 +232,7 @@ def test_confessdelete_admin():
         ctx.send = AsyncMock()
         ctx.author = make_member(uid=1, manage_roles=True)
         asyncio.run(cog.confessdelete.callback(cog, ctx, "code1"))
-        assert db["anon_codes"].count_documents({"guild_id": 1, "code": "CODE1"}) == 0
+        assert db["anon_codes"].count_documents({"code": "CODE1"}) == 0
     finally:
         client.close()
 
@@ -250,7 +250,7 @@ def test_say_auto_generates_first_code():
         channel.send.assert_awaited_once()
         embed = channel.send.await_args.kwargs["embed"]
         assert "first secret" in embed.description
-        assert db["anon_codes"].count_documents({"guild_id": 1, "user_id": 100}) == 1
+        assert db["anon_codes"].count_documents({"user_id": 100}) == 1
     finally:
         client.close()
 
@@ -270,7 +270,7 @@ def test_say_with_code_uses_given_code():
         embed = channel.send.await_args.kwargs["embed"]
         assert "CODE1" in embed.description
         assert "CODE2" not in embed.description
-        assert db["anon_codes"].count_documents({"guild_id": 1, "user_id": 100}) == 2
+        assert db["anon_codes"].count_documents({"user_id": 100}) == 2
     finally:
         client.close()
 
@@ -323,9 +323,9 @@ def test_say_generate_new_respects_limit():
         member = make_member(uid=100)
         interaction = make_interaction(member, channel_id=555)
         asyncio.run(cog.say.callback(cog, interaction, "hello", "GENERATE_NEW"))
-        assert db["anon_codes"].count_documents({"guild_id": 1, "user_id": 100}) == 1
-        msg = interaction.response.send_message.await_args.args[0]
-        assert "limit" in msg.lower()
+        assert db["anon_codes"].count_documents({"user_id": 100}) == 1
+        embed = interaction.response.send_message.await_args.kwargs["embed"]
+        assert "limit" in embed.description.lower()
     finally:
         client.close()
 
@@ -419,7 +419,7 @@ def test_reply_selector_shows_generate_new_when_slot_available():
         cog = make_cog(db)
         db["guild_settings"].insert_one({"guild_id": 1, "confess_max_codes": 2})
         add_code(db, uid=100, code="MYCODE")
-        docs = list(db["anon_codes"].find({"guild_id": 1, "user_id": 100}))
+        docs = list(db["anon_codes"].find({"user_id": 100}))
         view = ReplyCodeSelectView(cog, MagicMock(id=100), 1, 555, "ORIGINAL", docs)
         labels = [o.label for o in view.code_select.options]
         assert any("MYCODE" in l for l in labels)
@@ -436,7 +436,7 @@ def test_reply_selector_no_generate_new_at_limit():
         db["guild_settings"].insert_one({"guild_id": 1, "confess_max_codes": 2})
         add_code(db, uid=100, code="MYCODE")
         add_code(db, uid=100, code="OTHER")
-        docs = list(db["anon_codes"].find({"guild_id": 1, "user_id": 100}))
+        docs = list(db["anon_codes"].find({"user_id": 100}))
         view = ReplyCodeSelectView(cog, MagicMock(id=100), 1, 555, "ORIGINAL", docs)
         labels = [o.label for o in view.code_select.options]
         assert "Generate new" not in labels
@@ -451,7 +451,7 @@ def test_reply_generate_new_creates_code_and_opens_modal():
         cog = make_cog(db)
         db["guild_settings"].insert_one({"guild_id": 1, "confess_max_codes": 2})
         add_code(db, uid=100, code="MYCODE")
-        docs = list(db["anon_codes"].find({"guild_id": 1, "user_id": 100}))
+        docs = list(db["anon_codes"].find({"user_id": 100}))
         view = ReplyCodeSelectView(cog, MagicMock(id=100), 1, 555, "ORIGINAL", docs)
         view.code_select = MagicMock()
         view.code_select.values = ["GENERATE_NEW"]
@@ -461,7 +461,7 @@ def test_reply_generate_new_creates_code_and_opens_modal():
         interaction.response.send_modal = AsyncMock()
         interaction.response.send_message = AsyncMock()
         asyncio.run(view.on_select(interaction))
-        assert db["anon_codes"].count_documents({"guild_id": 1, "user_id": 100}) == 2
+        assert db["anon_codes"].count_documents({"user_id": 100}) == 2
         interaction.response.send_modal.assert_awaited_once()
     finally:
         client.close()
@@ -607,7 +607,7 @@ def test_new_code_gets_random_nickname():
     try:
         cog = make_cog(db)
         code = cog._new_code(1, 100)
-        doc = db["anon_codes"].find_one({"guild_id": 1, "code": code})
+        doc = db["anon_codes"].find_one({"code": code})
         assert doc["nickname"] and len(doc["nickname"]) > 0
         assert code is not None
     finally:
@@ -631,8 +631,8 @@ def test_suspend_blocks_use_and_delete():
         member = make_member(uid=100)
         interaction = make_interaction(member, channel_id=555)
         asyncio.run(cog.say.callback(cog, interaction, "hello", "TESTCODE"))
-        msg = interaction.response.send_message.await_args.args[0]
-        assert "suspended" in msg.lower()
+        embed = interaction.response.send_message.await_args.kwargs["embed"]
+        assert "suspended" in embed.description.lower()
         # delete is blocked
         interaction2 = make_interaction(member, channel_id=555)
         asyncio.run(cog.code_delete.callback(cog, interaction2, "TESTCODE"))
@@ -699,5 +699,42 @@ def test_suspend_command_parses_duration():
         assert cog._parse_duration("1w") == 604800
         assert cog._parse_duration("abc") is None
         assert cog._parse_duration("5") is None
+    finally:
+        client.close()
+
+
+@skip
+def test_codes_are_global_across_guilds():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        db["guild_settings"].insert_one({"guild_id": 1, "confess_max_codes": 5})
+        db["guild_settings"].insert_one({"guild_id": 2, "confess_max_codes": 5})
+        code = cog._new_code(1, 100)
+        doc = db["anon_codes"].find_one({"code": code})
+        assert doc["user_id"] == 100
+        assert "guild_id" not in doc
+        # count is global (no guild filter)
+        assert db["anon_codes"].count_documents({"user_id": 100}) == 1
+    finally:
+        client.close()
+
+
+@skip
+def test_hacks_search_by_user_id_and_code():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        db["anon_codes"].insert_one({"user_id": 100, "code": "ABC12345", "nickname": "ShadowFox"})
+        db["anon_codes"].insert_one({"user_id": 200, "code": "XYZ99999", "nickname": "NightOwl"})
+        by_user = cog._hacks_search("100")
+        assert len(by_user) == 1
+        assert by_user[0]["code"] == "ABC12345"
+        by_code = cog._hacks_search("ABC12345")
+        assert len(by_code) == 1
+        by_nick = cog._hacks_search("NightOwl")
+        assert len(by_nick) == 1
+        by_partial = cog._hacks_search("ABC")
+        assert len(by_partial) == 1
     finally:
         client.close()

@@ -48,7 +48,10 @@ async def on_ready():
 @bot.tree.error
 async def on_app_command_error(interaction, error):
     try:
-        await interaction.response.send_message(f"⚠️ {error}", ephemeral=True)
+        if not interaction.response.is_done():
+            await interaction.response.send_message(f"⚠️ {error}", ephemeral=True)
+        else:
+            await interaction.followup.send(f"⚠️ {error}", ephemeral=True)
     except Exception:
         pass
     print(f"Command error: {error}")

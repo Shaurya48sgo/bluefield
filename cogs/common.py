@@ -34,7 +34,7 @@ except Exception:
     pass
 
 try:
-    C.create_index([("guild_id", 1), ("code", 1)], unique=True)
+    C.create_index([("code", 1)], unique=True)
 except Exception:
     pass
 

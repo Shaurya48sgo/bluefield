@@ -111,7 +111,7 @@ class ReplyCodeSelectView(discord.ui.View):
                 )
                 return
             value = self.cog._new_code(self.guild_id, self.author.id)
-            self.docs = list(C.find({"guild_id": self.guild_id, "user_id": self.author.id}).sort("created_at", 1))
+            self.docs = list(C.find({"user_id": self.author.id}).sort("created_at", 1))
         await interaction.response.send_modal(
             SecretReplyModal(
                 self.cog, self.guild_id, self.channel_id, self.original_code, value, self.original_message
@@ -127,7 +127,7 @@ class SecretReplyButton(discord.ui.Button):
         self.code = code
 
     async def callback(self, interaction):
-        docs = list(C.find({"guild_id": self.guild_id, "user_id": interaction.user.id}).sort("created_at", 1))
+        docs = list(C.find({"user_id": interaction.user.id}).sort("created_at", 1))
         embed = discord.Embed(
             title="Reply",
             description="Which code do you want to reply as?",
@@ -177,6 +177,42 @@ class InboxView(discord.ui.View):
             color=discord.Colour(0x9B59B6),
         )
         await interaction.response.edit_message(embed=embed)
+
+
+class HacksSearchModal(discord.ui.Modal):
+    def __init__(self, cog):
+        super().__init__(title="Hacks search")
+        self.cog = cog
+        self.query_input = discord.ui.TextInput(
+            label="Search", placeholder="User ID, code, or nickname", max_length=100, required=True
+        )
+        self.add_item(self.query_input)
+
+    async def on_submit(self, interaction):
+        query = self.query_input.value.strip()
+        docs = self.cog._hacks_search(query)
+        if not docs:
+            await interaction.response.send_message(f"No codes found for `{query}`.", ephemeral=True)
+            return
+        embed = self.cog._hacks_results_embed(query, docs)
+        await interaction.response.send_message(embed=embed, view=HacksSearchView(self.cog, interaction.user))
+
+
+class HacksSearchView(discord.ui.View):
+    def __init__(self, cog, author):
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.author = author
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.author.id:
+            await interaction.response.send_message("Not your search.")
+            return False
+        return True
+
+    @discord.ui.button(label="🔍 Search", style=discord.ButtonStyle.primary)
+    async def search_button(self, interaction, button):
+        await interaction.response.send_modal(HacksSearchModal(self.cog))
 
 
 class ConfessCog(commands.Cog):
@@ -283,7 +319,7 @@ class ConfessCog(commands.Cog):
     async def code_autocomplete(self, interaction, current):
         gid = interaction.guild.id
         uid = interaction.user.id
-        docs = list(C.find({"guild_id": gid, "user_id": uid}).sort("created_at", 1))
+        docs = list(C.find({"user_id": uid}).sort("created_at", 1))
         out = []
         for d in docs:
             label = self._code_label(d)
@@ -295,7 +331,7 @@ class ConfessCog(commands.Cog):
         return out[:25]
 
     async def delete_autocomplete(self, interaction, current):
-        docs = C.find({"guild_id": interaction.guild.id, "user_id": interaction.user.id})
+        docs = C.find({"user_id": interaction.user.id})
         out = []
         for d in docs:
             label = self._code_label(d)
@@ -306,7 +342,7 @@ class ConfessCog(commands.Cog):
         return out
 
     async def nick_autocomplete(self, interaction, current):
-        docs = C.find({"guild_id": interaction.guild.id, "user_id": interaction.user.id}).sort("created_at", 1)
+        docs = C.find({"user_id": interaction.user.id}).sort("created_at", 1)
         out = []
         for d in docs:
             label = self._code_label(d)
@@ -321,51 +357,53 @@ class ConfessCog(commands.Cog):
     @app_commands.autocomplete(code=code_autocomplete)
     async def say(self, interaction, message: str, code: str):
         """Post anonymously using a code (or generate a new one)."""
+        async def fail(text):
+            embed = discord.Embed(color=discord.Colour(0xED4245), description=text)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+
         channel = self._channel(interaction.guild)
         if channel is None:
-            await interaction.response.send_message("Anonymous chat isn't enabled in this server.")
+            await fail("Anonymous chat isn't enabled in this server.")
             return
         if interaction.channel_id != channel.id:
-            await interaction.response.send_message(f"Anonymous messages only work in {channel.mention}.")
+            await fail(f"Anonymous messages only work in {channel.mention}.")
             return
         if is_blacklisted(interaction.guild.id, interaction.user.id, interaction.user):
-            await interaction.response.send_message("You are blacklisted from anonymous chat.")
+            await fail("You are blacklisted from anonymous chat.")
             return
         if not message.strip():
-            await interaction.response.send_message("Message cannot be empty.")
+            await fail("Message cannot be empty.")
             return
 
         uid = interaction.user.id
         gid = interaction.guild.id
         limit = self._max_codes(gid)
-        docs = list(C.find({"guild_id": gid, "user_id": uid}).sort("created_at", 1))
+        docs = list(C.find({"user_id": uid}).sort("created_at", 1))
 
         code = code.strip().upper()
         if code == "GENERATE_NEW":
             if len(docs) >= limit:
-                await interaction.response.send_message(
+                await fail(
                     f"You've reached the limit of **{limit}** codes. "
                     "Delete one first with `/secret code delete <code>`."
                 )
                 return
             code = self._new_code(gid, uid)
-            docs = list(C.find({"guild_id": gid, "user_id": uid}).sort("created_at", 1))
+            docs = list(C.find({"user_id": uid}).sort("created_at", 1))
         else:
-            code_doc = C.find_one({"guild_id": gid, "code": code, "user_id": uid})
+            code_doc = C.find_one({"code": code, "user_id": uid})
             if not code_doc:
-                await interaction.response.send_message(
-                    "Invalid code. Pick one of your codes or 'Generate new'."
-                )
+                await fail("Invalid code. Pick one of your codes or 'Generate new'.")
                 return
             if self._is_suspended(code_doc):
                 until = code_doc.get("suspended_until")
-                await interaction.response.send_message(
+                await fail(
                     f"⛔ This code is **suspended** until {until.strftime('%Y-%m-%d %H:%M UTC')}."
                 )
                 return
 
         post_number = _next_post(gid)
-        code_doc = C.find_one({"guild_id": gid, "code": code, "user_id": uid})
+        code_doc = C.find_one({"code": code, "user_id": uid})
         nickname = code_doc.get("nickname") if code_doc else None
         layout_idx = _layout_index(gid, "secret_layout", 0)
         embed = build_secret(layout_idx, code, nickname, message, post_number)
@@ -377,7 +415,8 @@ class ConfessCog(commands.Cog):
                 allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=False),
             )
         except Exception as e:
-            await interaction.response.send_message(f"Failed to post: {e}")
+            embed = discord.Embed(color=discord.Colour(0xED4245), description=f"Failed to post: {e}")
+            await interaction.response.send_message(embed=embed, ephemeral=True)
             return
         M.insert_one(
             {
@@ -406,8 +445,8 @@ class ConfessCog(commands.Cog):
             orig = M.find_one({"guild_id": guild_id, "message_id": original_message.id})
             if orig:
                 target_post = orig.get("post_number")
-        reply_doc = C.find_one({"guild_id": guild_id, "code": code})
-        target_doc = C.find_one({"guild_id": guild_id, "code": original_code})
+        reply_doc = C.find_one({"code": code})
+        target_doc = C.find_one({"code": original_code})
         reply_nick = reply_doc.get("nickname") if reply_doc else None
         target_nick = target_doc.get("nickname") if target_doc else None
         layout_idx = _layout_index(guild_id, "reply_layout", 0)
@@ -429,7 +468,7 @@ class ConfessCog(commands.Cog):
         except Exception as e:
             await interaction.response.send_message(f"Failed to post reply: {e}")
             return
-        owner = C.find_one({"guild_id": guild_id, "code": original_code})
+        owner = C.find_one({"code": original_code})
         if owner:
             I.insert_one(
                 {
@@ -469,16 +508,15 @@ class ConfessCog(commands.Cog):
 
     def _new_code(self, guild_id, user_id):
         limit = self._max_codes(guild_id)
-        count = C.count_documents({"guild_id": guild_id, "user_id": user_id})
+        count = C.count_documents({"user_id": user_id})
         if count >= limit:
             raise ValueError(f"limit {limit} reached")
         code = generate_code()
-        while C.find_one({"guild_id": guild_id, "code": code}):
+        while C.find_one({"code": code}):
             code = generate_code()
         nickname = random_nickname()
         C.insert_one(
             {
-                "guild_id": guild_id,
                 "user_id": user_id,
                 "code": code,
                 "nickname": nickname,
@@ -498,45 +536,47 @@ class ConfessCog(commands.Cog):
     @app_commands.autocomplete(code=delete_autocomplete)
     async def code_delete(self, interaction, code: str):
         """Delete one of your anonymous codes (frees a slot)."""
+        async def reply(text):
+            await interaction.response.send_message(text, ephemeral=True)
         code = code.strip().upper()
         if code == "GENERATE_NEW":
-            await interaction.response.send_message("That's not one of your codes.")
+            await reply("That's not one of your codes.")
             return
-        doc = C.find_one({"guild_id": interaction.guild.id, "code": code, "user_id": interaction.user.id})
+        doc = C.find_one({"code": code, "user_id": interaction.user.id})
         if not doc:
-            await interaction.response.send_message("That's not one of your codes.")
+            await reply("That's not one of your codes.")
             return
         if self._is_suspended(doc):
-            await interaction.response.send_message(
-                "⛔ This code is suspended and cannot be deleted. Ask an admin to unsuspend it."
-            )
+            await reply("⛔ This code is suspended and cannot be deleted. Ask an admin to unsuspend it.")
             return
         C.delete_one({"_id": doc["_id"]})
         audit(interaction.guild.id, interaction.user.id, "code_delete", "code", code)
-        await interaction.response.send_message(f"🗑️ Deleted code **`{code}`**.")
+        await reply(f"🗑️ Deleted code **`{code}`**.")
 
     @code.command(name="nickname")
     @app_commands.describe(code="Pick one of your codes", name="Your new nickname")
     @app_commands.autocomplete(code=delete_autocomplete)
     async def code_nickname(self, interaction, code: str, name: str):
         """Change a code's nickname."""
+        async def reply(text):
+            await interaction.response.send_message(text, ephemeral=True)
         code = code.strip().upper()
         name = name.strip()
         if not name:
-            await interaction.response.send_message("Nickname cannot be empty.")
+            await reply("Nickname cannot be empty.")
             return
         if len(name) > 32:
-            await interaction.response.send_message("Nickname must be 32 characters or less.")
+            await reply("Nickname must be 32 characters or less.")
             return
         res = C.update_one(
-            {"guild_id": interaction.guild.id, "code": code, "user_id": interaction.user.id},
+            {"code": code, "user_id": interaction.user.id},
             {"$set": {"nickname": name}},
         )
         if res.matched_count == 0:
-            await interaction.response.send_message("That's not one of your codes.")
+            await reply("That's not one of your codes.")
             return
         audit(interaction.guild.id, interaction.user.id, "code_rename", "code", code)
-        await interaction.response.send_message(f"✅ Code **`{code}`** nickname changed to **{name}**.")
+        await reply(f"✅ Code **`{code}`** nickname changed to **{name}**.")
 
     # ---------- prefix: suspend / unsuspend ----------
 
@@ -570,7 +610,7 @@ class ConfessCog(commands.Cog):
     async def suspend(self, ctx, code: str, duration: str = None):
         """Suspend a secret code for a duration (e.g. 30m, 2h, 1w)."""
         code = code.strip().upper()
-        doc = C.find_one({"guild_id": ctx.guild.id, "code": code})
+        doc = C.find_one({"code": code})
         if not doc:
             await ctx.send("No such code in this server.")
             return
@@ -589,7 +629,7 @@ class ConfessCog(commands.Cog):
         """Remove a suspension from a secret code."""
         code = code.strip().upper()
         res = C.update_one(
-            {"guild_id": ctx.guild.id, "code": code},
+            {"code": code},
             {"$unset": {"suspended_until": ""}},
         )
         if res.matched_count == 0:
@@ -609,6 +649,38 @@ class ConfessCog(commands.Cog):
             return True
         return False
 
+    async def _owner_name(self, uid):
+        owner = self.bot.get_user(uid)
+        return f"{owner} ({uid})" if owner else str(uid)
+
+    def _hacks_search(self, query):
+        query = query.strip()
+        docs = []
+        if query.isdigit():
+            docs = list(C.find({"user_id": int(query)}).sort("created_at", 1))
+        else:
+            q = query.upper()
+            by_code = list(C.find({"code": {"$regex": f"^{q}$", "$options": "i"}}))
+            by_nick = list(C.find({"nickname": {"$regex": f"^{query}$", "$options": "i"}}))
+            partial = list(C.find({"$or": [{"code": {"$regex": query, "$options": "i"}}, {"nickname": {"$regex": query, "$options": "i"}}]}))
+            docs = by_code or by_nick or partial
+        return docs
+
+    @commands.command(name="hackssearch")
+    async def hackssearch(self, ctx, *, query: str = None):
+        """Dev/owner only: search codes by user ID, code, or nickname (DM only)."""
+        if not await self._is_authorized(ctx.message):
+            return
+        if not query:
+            await ctx.send("Usage: `I?hackssearch <userID | code | nickname>`")
+            return
+        docs = self._hacks_search(query)
+        if not docs:
+            await ctx.send(f"No codes found for `{query}`.")
+            return
+        embed = self._hacks_results_embed(query, docs)
+        await ctx.send(embed=embed, view=HacksSearchView(self, ctx.author))
+
     @commands.command(name="hackscheck")
     async def hackscheck(self, ctx, code: str = None):
         """Dev/owner only: check a secret code (DM only)."""
@@ -618,24 +690,26 @@ class ConfessCog(commands.Cog):
         if not code:
             await ctx.send("Usage: `I?hackscheck <code>`")
             return
-        docs = list(C.find({"code": code}))
+        docs = self._hacks_search(code)
         if not docs:
             await ctx.send(f"No code **`{code}`** found.")
             return
-        embed = discord.Embed(title=f"Code `{code}`", color=discord.Colour(0x9B59B6))
-        for d in docs:
-            gid = d.get("guild_id")
-            guild = self.bot.get_guild(gid)
-            gname = guild.name if guild else str(gid)
-            owner = self.bot.get_user(d.get("user_id"))
-            oname = f"{owner} ({d.get('user_id')})" if owner else str(d.get("user_id"))
+        embed = self._hacks_results_embed(code, docs)
+        await ctx.send(embed=embed, view=HacksSearchView(self, ctx.author))
+
+    def _hacks_results_embed(self, query, docs):
+        embed = discord.Embed(
+            title=f"Hacks search · `{query}` · {len(docs)} result(s)",
+            color=discord.Colour(0x9B59B6),
+        )
+        for d in docs[:20]:
             status = "⛔ suspended" if self._is_suspended(d) else "✅ active"
             embed.add_field(
-                name=gname,
-                value=f"Owner: {oname}\nNickname: {d.get('nickname')}\nStatus: {status}\nCreated: {d.get('created_at')}",
+                name=f"`{d['code']}` · {d.get('nickname', '?')}",
+                value=f"Owner: {self._owner_name(d.get('user_id'))}\nStatus: {status}\nCreated: {d.get('created_at')}",
                 inline=False,
             )
-        await ctx.send(embed=embed)
+        return embed
 
     @commands.command(name="hackslist")
     async def hackslist(self, ctx):
@@ -700,7 +774,7 @@ class ConfessCog(commands.Cog):
     @has_admin_or_dev()
     async def confesscodes(self, ctx, user: discord.Member = None):
         """List a member's anonymous codes (admin)."""
-        query = {"guild_id": ctx.guild.id}
+        query = {}
         if user:
             query["user_id"] = user.id
         docs = list(C.find(query).sort("created_at", 1))
@@ -717,7 +791,7 @@ class ConfessCog(commands.Cog):
     async def confessdelete(self, ctx, code: str):
         """Delete any anonymous code (admin)."""
         code = code.strip().upper()
-        res = C.delete_one({"guild_id": ctx.guild.id, "code": code})
+        res = C.delete_one({"code": code})
         if res.deleted_count == 0:
             await ctx.send("No such code.")
             return
