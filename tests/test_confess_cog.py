@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -609,5 +610,94 @@ def test_new_code_gets_random_nickname():
         doc = db["anon_codes"].find_one({"guild_id": 1, "code": code})
         assert doc["nickname"] and len(doc["nickname"]) > 0
         assert code is not None
+    finally:
+        client.close()
+
+
+@skip
+def test_suspend_blocks_use_and_delete():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        db["guild_settings"].insert_one({"guild_id": 1, "confess_channel_id": 555})
+        add_code(db, uid=100, code="TESTCODE")
+        # suspend it
+        doc = db["anon_codes"].find_one({"code": "TESTCODE"})
+        from datetime import timedelta
+        until = datetime.now(timezone.utc) + timedelta(hours=1)
+        db["anon_codes"].update_one({"_id": doc["_id"]}, {"$set": {"suspended_until": until}})
+        assert cog._is_suspended(db["anon_codes"].find_one({"code": "TESTCODE"})) is True
+        # say is blocked
+        member = make_member(uid=100)
+        interaction = make_interaction(member, channel_id=555)
+        asyncio.run(cog.say.callback(cog, interaction, "hello", "TESTCODE"))
+        msg = interaction.response.send_message.await_args.args[0]
+        assert "suspended" in msg.lower()
+        # delete is blocked
+        interaction2 = make_interaction(member, channel_id=555)
+        asyncio.run(cog.code_delete.callback(cog, interaction2, "TESTCODE"))
+        assert db["anon_codes"].count_documents({"code": "TESTCODE"}) == 1
+        # unsuspend allows use
+        db["anon_codes"].update_one({"_id": doc["_id"]}, {"$unset": {"suspended_until": ""}})
+        assert cog._is_suspended(db["anon_codes"].find_one({"code": "TESTCODE"})) is False
+    finally:
+        client.close()
+
+
+@skip
+def test_hackscheck_silent_in_guild_and_for_stranger():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        add_code(db, uid=100, code="TESTCODE")
+        # stranger in a guild -> silent (nothing sent)
+        ctx = MagicMock()
+        ctx.guild = MagicMock()
+        ctx.message.guild = MagicMock()  # not DM
+        ctx.author = make_member(uid=999)
+        ctx.send = AsyncMock()
+        asyncio.run(cog.hackscheck.callback(cog, ctx, "TESTCODE"))
+        ctx.send.assert_not_awaited()
+    finally:
+        client.close()
+
+
+@skip
+def test_hackscheck_owner_in_dm_works():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        add_code(db, uid=100, code="TESTCODE")
+        ctx = MagicMock()
+        ctx.guild = None
+        ctx.message = MagicMock()
+        ctx.message.guild = None  # DM
+        ctx.message.author = make_member(uid=100)
+        ctx.author = make_member(uid=100)
+        ctx.send = AsyncMock()
+        import cogs.confess as confess_mod
+        orig = confess_mod.is_owner
+        confess_mod.is_owner = lambda uid: uid == 100
+        try:
+            asyncio.run(cog.hackscheck.callback(cog, ctx, "TESTCODE"))
+        finally:
+            confess_mod.is_owner = orig
+        ctx.send.assert_awaited_once()
+        embed = ctx.send.await_args.kwargs["embed"]
+        assert "TESTCODE" in embed.title
+    finally:
+        client.close()
+
+
+@skip
+def test_suspend_command_parses_duration():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        assert cog._parse_duration("30m") == 1800
+        assert cog._parse_duration("2h") == 7200
+        assert cog._parse_duration("1w") == 604800
+        assert cog._parse_duration("abc") is None
+        assert cog._parse_duration("5") is None
     finally:
         client.close()

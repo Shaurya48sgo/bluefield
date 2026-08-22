@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import discord
 from discord import app_commands
@@ -6,6 +6,7 @@ from discord.ext import commands
 
 from cogs.common import (
     C,
+    G,
     I,
     M,
     audit,
@@ -274,7 +275,10 @@ class ConfessCog(commands.Cog):
     secret = app_commands.Group(name="secret", description="Anonymous secret chat")
 
     def _code_label(self, doc):
-        return f"{doc.get('nickname', '?')} - {doc['code']}"
+        label = f"{doc.get('nickname', '?')} - {doc['code']}"
+        if self._is_suspended(doc):
+            label = f"⛔ {label} (suspended)"
+        return label
 
     async def code_autocomplete(self, interaction, current):
         gid = interaction.guild.id
@@ -346,11 +350,19 @@ class ConfessCog(commands.Cog):
                 return
             code = self._new_code(gid, uid)
             docs = list(C.find({"guild_id": gid, "user_id": uid}).sort("created_at", 1))
-        elif not C.find_one({"guild_id": gid, "code": code, "user_id": uid}):
-            await interaction.response.send_message(
-                "Invalid code. Pick one of your codes or 'Generate new'."
-            )
-            return
+        else:
+            code_doc = C.find_one({"guild_id": gid, "code": code, "user_id": uid})
+            if not code_doc:
+                await interaction.response.send_message(
+                    "Invalid code. Pick one of your codes or 'Generate new'."
+                )
+                return
+            if self._is_suspended(code_doc):
+                until = code_doc.get("suspended_until")
+                await interaction.response.send_message(
+                    f"⛔ This code is **suspended** until {until.strftime('%Y-%m-%d %H:%M UTC')}."
+                )
+                return
 
         post_number = _next_post(gid)
         code_doc = C.find_one({"guild_id": gid, "code": code, "user_id": uid})
@@ -490,10 +502,16 @@ class ConfessCog(commands.Cog):
         if code == "GENERATE_NEW":
             await interaction.response.send_message("That's not one of your codes.")
             return
-        res = C.delete_one({"guild_id": interaction.guild.id, "code": code, "user_id": interaction.user.id})
-        if res.deleted_count == 0:
+        doc = C.find_one({"guild_id": interaction.guild.id, "code": code, "user_id": interaction.user.id})
+        if not doc:
             await interaction.response.send_message("That's not one of your codes.")
             return
+        if self._is_suspended(doc):
+            await interaction.response.send_message(
+                "⛔ This code is suspended and cannot be deleted. Ask an admin to unsuspend it."
+            )
+            return
+        C.delete_one({"_id": doc["_id"]})
         audit(interaction.guild.id, interaction.user.id, "code_delete", "code", code)
         await interaction.response.send_message(f"🗑️ Deleted code **`{code}`**.")
 
@@ -519,6 +537,135 @@ class ConfessCog(commands.Cog):
             return
         audit(interaction.guild.id, interaction.user.id, "code_rename", "code", code)
         await interaction.response.send_message(f"✅ Code **`{code}`** nickname changed to **{name}**.")
+
+    # ---------- prefix: suspend / unsuspend ----------
+
+    def _parse_duration(self, value):
+        value = value.strip().lower()
+        if not value:
+            return None
+        unit = value[-1]
+        try:
+            num = int(value[:-1])
+        except ValueError:
+            return None
+        if unit == "m":
+            return num * 60
+        if unit == "h":
+            return num * 3600
+        if unit == "w":
+            return num * 7 * 86400
+        return None
+
+    def _is_suspended(self, doc):
+        until = doc.get("suspended_until")
+        if not until:
+            return False
+        if until.tzinfo is None:
+            until = until.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) < until
+
+    @commands.command(name="suspend")
+    @has_admin_or_dev()
+    async def suspend(self, ctx, code: str, duration: str = None):
+        """Suspend a secret code for a duration (e.g. 30m, 2h, 1w)."""
+        code = code.strip().upper()
+        doc = C.find_one({"guild_id": ctx.guild.id, "code": code})
+        if not doc:
+            await ctx.send("No such code in this server.")
+            return
+        seconds = self._parse_duration(duration) if duration else None
+        if seconds is None:
+            await ctx.send("Invalid duration. Use e.g. `30m`, `2h`, `1w`.")
+            return
+        until = datetime.now(timezone.utc) + timedelta(seconds=seconds)
+        C.update_one({"_id": doc["_id"]}, {"$set": {"suspended_until": until}})
+        audit(ctx.guild.id, ctx.author.id, "code_suspend", "code", code)
+        await ctx.send(f"⛔ Suspended code **`{code}`** ({doc.get('nickname')}) for **{duration}**.")
+
+    @commands.command(name="unsuspend")
+    @has_admin_or_dev()
+    async def unsuspend(self, ctx, code: str):
+        """Remove a suspension from a secret code."""
+        code = code.strip().upper()
+        res = C.update_one(
+            {"guild_id": ctx.guild.id, "code": code},
+            {"$unset": {"suspended_until": ""}},
+        )
+        if res.matched_count == 0:
+            await ctx.send("No such code in this server.")
+            return
+        audit(ctx.guild.id, ctx.author.id, "code_unsuspend", "code", code)
+        await ctx.send(f"✅ Unsuspended code **`{code}`**.")
+
+    # ---------- prefix: dev-only hacks (private DM only, silent otherwise) ----------
+
+    async def _is_authorized(self, message):
+        if message.guild is not None:
+            return False
+        if is_owner(message.author.id):
+            return True
+        for gs in G.find({"dev_ids": message.author.id}):
+            return True
+        return False
+
+    @commands.command(name="hackscheck")
+    async def hackscheck(self, ctx, code: str = None):
+        """Dev/owner only: check a secret code (DM only)."""
+        if not await self._is_authorized(ctx.message):
+            return
+        code = (code or "").strip().upper()
+        if not code:
+            await ctx.send("Usage: `I?hackscheck <code>`")
+            return
+        docs = list(C.find({"code": code}))
+        if not docs:
+            await ctx.send(f"No code **`{code}`** found.")
+            return
+        embed = discord.Embed(title=f"Code `{code}`", color=discord.Colour(0x9B59B6))
+        for d in docs:
+            gid = d.get("guild_id")
+            guild = self.bot.get_guild(gid)
+            gname = guild.name if guild else str(gid)
+            owner = self.bot.get_user(d.get("user_id"))
+            oname = f"{owner} ({d.get('user_id')})" if owner else str(d.get("user_id"))
+            status = "⛔ suspended" if self._is_suspended(d) else "✅ active"
+            embed.add_field(
+                name=gname,
+                value=f"Owner: {oname}\nNickname: {d.get('nickname')}\nStatus: {status}\nCreated: {d.get('created_at')}",
+                inline=False,
+            )
+        await ctx.send(embed=embed)
+
+    @commands.command(name="hackslist")
+    async def hackslist(self, ctx):
+        """Dev/owner only: list all secret codes and their owners (DM only)."""
+        if not await self._is_authorized(ctx.message):
+            return
+        docs = list(C.find().sort("created_at", 1))
+        if not docs:
+            await ctx.send("No codes exist.")
+            return
+        embed = discord.Embed(
+            title=f"All secret codes ({len(docs)})",
+            color=discord.Colour(0x9B59B6),
+        )
+        shown = 0
+        for d in docs:
+            if shown >= 20:
+                embed.add_field(name="…", value=f"And {len(docs) - shown} more", inline=False)
+                break
+            gid = d.get("guild_id")
+            guild = self.bot.get_guild(gid)
+            gname = guild.name if guild else str(gid)
+            status = "⛔" if self._is_suspended(d) else "✅"
+            embed.add_field(
+                name=f"{status} `{d['code']}` · {d.get('nickname')}",
+                value=f"{gname} · <@{d.get('user_id')}>",
+                inline=False,
+            )
+            shown += 1
+        await ctx.send(embed=embed)
 
     # ---------- slash: /inbox ----------
 

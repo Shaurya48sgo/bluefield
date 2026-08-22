@@ -70,7 +70,7 @@ def _make_build(title, joiner):
     return lambda c, n, m, p: _s_build(c, n, m, p, title=title, joiner=joiner)
 
 
-TITLES = [None, "Secret", "Anonymous", "Message", "New", "Incoming"]
+TITLES = [None, "Secret", "Message", "New", "Incoming"]
 JOINERS = ["·", "—", "|", "➜", "»", "~", ":", "@", "→", "+", "=", "//", "::", "#", "*", "-", "❯", "►", "×", "∧"]
 
 SECRET_LAYOUTS = [
