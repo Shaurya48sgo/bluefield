@@ -179,7 +179,7 @@ def test_say_success_posts_anonymously():
         embed = channel.send.await_args.kwargs["embed"]
         assert "TESTCODE" in embed.description
         assert "hello world" in embed.description
-        assert "Post #1" in embed.footer.text
+        assert "Post #1" in embed.description
         confirm = interaction.response.send_message.await_args.kwargs["embed"]
         assert "posted" in confirm.title.lower()
         assert interaction.response.send_message.await_args.kwargs["ephemeral"] is True
@@ -528,19 +528,21 @@ def test_post_reply_uses_reference_to_original():
 def test_build_secret_embed_layout():
     from cogs.layouts import build_secret, SECRET_LAYOUTS
     assert len(SECRET_LAYOUTS) == 20
-    e = build_secret(1, "X7KQ9FD2", "hello", 42)
+    e = build_secret(1, "X7KQ9FD2", "ShadowFox", "hello", 42)
     assert "X7KQ9FD2" in e.title
     assert e.description == "hello"
+    assert e.author.name == "ShadowFox"
 
 
 @skip
 def test_build_reply_embed_layout():
     from cogs.layouts import build_reply, REPLY_LAYOUTS
     assert len(REPLY_LAYOUTS) == 20
-    e = build_reply(0, "REPLYCODE", "ORIGCODE", 7, "hello")
+    e = build_reply(0, "REPLYCODE", "ReplyNick", "ORIGCODE", "TargetNick", 7, "hello")
     assert "REPLYCODE" in e.description
     assert "ORIGCODE" in e.description
     assert "7" in e.description
+    assert e.author.name == "ReplyNick"
 
 
 @skip
@@ -593,5 +595,18 @@ def test_reply_embed_shows_codes_and_post_number():
         assert "REPLYCODE" in embed.description
         assert "ORIGCODE" in embed.description
         assert "7" in embed.description
+    finally:
+        client.close()
+
+
+@skip
+def test_new_code_gets_random_nickname():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        code = cog._new_code(1, 100)
+        doc = db["anon_codes"].find_one({"guild_id": 1, "code": code})
+        assert doc["nickname"] and len(doc["nickname"]) > 0
+        assert code is not None
     finally:
         client.close()

@@ -16,7 +16,7 @@ from cogs.common import (
     is_owner,
     set_guild_settings,
 )
-from cogs.layouts import REPLY_LAYOUTS, SECRET_LAYOUTS, build_reply, build_secret
+from cogs.layouts import REPLY_LAYOUTS, SECRET_LAYOUTS, build_reply, build_secret, random_nickname
 
 DEFAULT_MAX_CODES = 5
 
@@ -330,7 +330,9 @@ class ConfessCog(commands.Cog):
 
         post_number = _next_post(gid)
         layout_idx = _layout_index(gid, "secret_layout", 2)
-        embed = build_secret(layout_idx, code, message, post_number)
+        code_doc = C.find_one({"guild_id": gid, "code": code, "user_id": uid})
+        nickname = code_doc.get("nickname") if code_doc else None
+        embed = build_secret(layout_idx, code, nickname, message, post_number)
         view = SecretReplyView(self, gid, channel.id, code)
         try:
             sent = await channel.send(
@@ -368,8 +370,12 @@ class ConfessCog(commands.Cog):
             orig = M.find_one({"guild_id": guild_id, "message_id": original_message.id})
             if orig:
                 target_post = orig.get("post_number")
+        reply_doc = C.find_one({"guild_id": guild_id, "code": code})
+        target_doc = C.find_one({"guild_id": guild_id, "code": original_code})
+        reply_nick = reply_doc.get("nickname") if reply_doc else None
+        target_nick = target_doc.get("nickname") if target_doc else None
         layout_idx = _layout_index(guild_id, "reply_layout", 0)
-        embed = build_reply(layout_idx, code, original_code, target_post, text)
+        embed = build_reply(layout_idx, code, reply_nick, original_code, target_nick, target_post, text)
         channel = interaction.guild.get_channel(channel_id)
         if channel is None:
             await interaction.response.send_message("That channel no longer exists.")
@@ -433,11 +439,13 @@ class ConfessCog(commands.Cog):
         code = generate_code()
         while C.find_one({"guild_id": guild_id, "code": code}):
             code = generate_code()
+        nickname = random_nickname()
         C.insert_one(
             {
                 "guild_id": guild_id,
                 "user_id": user_id,
                 "code": code,
+                "nickname": nickname,
                 "created_at": datetime.now(timezone.utc),
             }
         )

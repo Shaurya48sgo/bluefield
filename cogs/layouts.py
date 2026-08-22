@@ -1,4 +1,22 @@
+import random
+
 import discord
+
+NICKNAME_ADJ = [
+    "Shadow", "Silent", "Swift", "Crimson", "Frost", "Golden", "Night", "Wild",
+    "Brave", "Clever", "Hidden", "Storm", "Lucky", "Mystic", "Rapid", "Solar",
+    "Cosmic", "Neon", "Phantom", "Emerald",
+]
+
+NICKNAME_NOUN = [
+    "Fox", "Wolf", "Owl", "Falcon", "Tiger", "Lynx", "Raven", "Viper",
+    "Bear", "Eagle", "Panther", "Phoenix", "Hawk", "Serpent", "Jaguar",
+    "Griffin", "Dragon", "Lion", "Deer", "Falcon",
+]
+
+
+def random_nickname():
+    return f"{random.choice(NICKNAME_ADJ)}{random.choice(NICKNAME_NOUN)}"
 
 
 def _color(code):
@@ -113,8 +131,7 @@ def _title_code(code, msg, post):
 
 
 def _stack(code, msg, post):
-    e = discord.Embed(title="Secret", color=_color(code), description=f"**`{code}`**\n\n{msg}")
-    e.set_footer(text=f"||Post #{post}||")
+    e = discord.Embed(title="Secret", color=_color(code), description=f"**`{code}`**\n\n{msg}\n\n-# Post #{post}")
     return e
 
 
@@ -173,9 +190,8 @@ def _post_title(code, msg, post):
 
 
 def _badge(code, msg, post):
-    e = discord.Embed(color=_color(code), description=msg)
+    e = discord.Embed(color=_color(code), description=f"{msg}\n\n-# Post #{post}")
     e.set_author(name=code)
-    e.set_footer(text=f"||Post #{post}||")
     return e
 
 
@@ -428,11 +444,17 @@ def _r_framed(r, t, p, text):
     )
 
 
-def build_secret(layout_index, code, message, post_number):
+def build_secret(layout_index, code, nickname, message, post_number):
     layout_index = max(0, min(layout_index, len(SECRET_LAYOUTS) - 1))
-    return SECRET_LAYOUTS[layout_index]["build"](code, message, post_number)
+    embed = SECRET_LAYOUTS[layout_index]["build"](code, message, post_number)
+    if nickname:
+        embed.set_author(name=nickname)
+    return embed
 
 
-def build_reply(layout_index, reply_code, target_code, target_post, text):
+def build_reply(layout_index, reply_code, reply_nick, target_code, target_nick, target_post, text):
     layout_index = max(0, min(layout_index, len(REPLY_LAYOUTS) - 1))
-    return REPLY_LAYOUTS[layout_index]["build"](reply_code, target_code, target_post, text)
+    embed = REPLY_LAYOUTS[layout_index]["build"](reply_code, target_code, target_post, text)
+    if reply_nick:
+        embed.set_author(name=reply_nick)
+    return embed
