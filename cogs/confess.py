@@ -83,7 +83,9 @@ class ReplyCodeSelectView(discord.ui.View):
         self.original_code = original_code
         self.original_message = original_message
         self.docs = docs
-        options = [discord.SelectOption(label=d["code"], value=d["code"]) for d in docs]
+        options = [
+            discord.SelectOption(label=f"{d.get('nickname', '?')} - {d['code']}", value=d["code"]) for d in docs
+        ]
         limit = self.cog._max_codes(guild_id)
         if len(docs) < limit:
             options.append(discord.SelectOption(label="Generate new", value="GENERATE_NEW"))
@@ -271,14 +273,18 @@ class ConfessCog(commands.Cog):
 
     secret = app_commands.Group(name="secret", description="Anonymous secret chat")
 
+    def _code_label(self, doc):
+        return f"{doc.get('nickname', '?')} - {doc['code']}"
+
     async def code_autocomplete(self, interaction, current):
         gid = interaction.guild.id
         uid = interaction.user.id
         docs = list(C.find({"guild_id": gid, "user_id": uid}).sort("created_at", 1))
         out = []
         for d in docs:
-            if current.lower() in d["code"].lower():
-                out.append(app_commands.Choice(name=d["code"], value=d["code"]))
+            label = self._code_label(d)
+            if current.lower() in label.lower() or current.lower() in d["code"].lower():
+                out.append(app_commands.Choice(name=label, value=d["code"]))
         limit = self._max_codes(gid)
         if len(docs) < limit:
             out.append(app_commands.Choice(name="Generate new", value="GENERATE_NEW"))
@@ -288,8 +294,20 @@ class ConfessCog(commands.Cog):
         docs = C.find({"guild_id": interaction.guild.id, "user_id": interaction.user.id})
         out = []
         for d in docs:
-            if current.lower() in d["code"].lower():
-                out.append(app_commands.Choice(name=d["code"], value=d["code"]))
+            label = self._code_label(d)
+            if current.lower() in label.lower() or current.lower() in d["code"].lower():
+                out.append(app_commands.Choice(name=label, value=d["code"]))
+            if len(out) >= 25:
+                break
+        return out
+
+    async def nick_autocomplete(self, interaction, current):
+        docs = C.find({"guild_id": interaction.guild.id, "user_id": interaction.user.id}).sort("created_at", 1)
+        out = []
+        for d in docs:
+            label = self._code_label(d)
+            if current.lower() in label.lower():
+                out.append(app_commands.Choice(name=label, value=d["code"]))
             if len(out) >= 25:
                 break
         return out

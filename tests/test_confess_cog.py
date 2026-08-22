@@ -405,8 +405,8 @@ def test_reply_button_shows_ephemeral_code_selector():
         assert kw["ephemeral"] is True
         select_view = kw["view"]
         labels = [o.label for o in select_view.code_select.options]
-        assert "MYCODE" in labels
-        assert "OTHER" in labels
+        assert any("MYCODE" in l for l in labels)
+        assert any("OTHER" in l for l in labels)
     finally:
         client.close()
 
@@ -421,7 +421,7 @@ def test_reply_selector_shows_generate_new_when_slot_available():
         docs = list(db["anon_codes"].find({"guild_id": 1, "user_id": 100}))
         view = ReplyCodeSelectView(cog, MagicMock(id=100), 1, 555, "ORIGINAL", docs)
         labels = [o.label for o in view.code_select.options]
-        assert "MYCODE" in labels
+        assert any("MYCODE" in l for l in labels)
         assert "Generate new" in labels
     finally:
         client.close()
