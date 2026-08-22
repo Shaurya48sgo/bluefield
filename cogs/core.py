@@ -95,6 +95,8 @@ class HelpView(discord.ui.View):
                     (f"{self.prefix}groupmax <n>", "Set max groups per member."),
                     (f"{self.prefix}confessmax <n>", "Set max codes per member."),
                     (f"{self.prefix}layout", "Preview the 20 secret message layouts (owner)."),
+                    (f"{self.prefix}layoutv2", "Preview the V2 secret message layouts (owner)."),
+                    (f"{self.prefix}layoutv2set <n>", "Choose a V2 secret layout (owner)."),
                     (f"{self.prefix}layoutr", "Preview the 20 reply layouts (owner)."),
                     (f"{self.prefix}layoutset <n>", "Choose a secret layout (owner)."),
                     (f"{self.prefix}layoutrset <n>", "Choose a reply layout (owner)."),

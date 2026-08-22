@@ -16,7 +16,15 @@ from cogs.common import (
     is_owner,
     set_guild_settings,
 )
-from cogs.layouts import REPLY_LAYOUTS, SECRET_LAYOUTS, build_reply, build_secret, random_nickname
+from cogs.layouts import (
+    REPLY_LAYOUTS,
+    SECRET_LAYOUTS,
+    SECRET_LAYOUTS_V2,
+    build_reply,
+    build_secret,
+    build_secret_v2,
+    random_nickname,
+)
 
 DEFAULT_MAX_CODES = 5
 
@@ -110,6 +118,52 @@ class ReplyCodeSelectView(discord.ui.View):
         )
 
 
+class SecretRenameModal(discord.ui.Modal):
+    def __init__(self, cog, guild_id, code, current_nick):
+        super().__init__(title="Change nickname")
+        self.cog = cog
+        self.guild_id = guild_id
+        self.code = code
+        self.nick_input = discord.ui.TextInput(
+            label="New nickname",
+            max_length=32,
+            required=True,
+            default=current_nick or "",
+        )
+        self.add_item(self.nick_input)
+
+    async def on_submit(self, interaction):
+        nick = self.nick_input.value.strip()
+        if not nick:
+            await interaction.response.send_message("Nickname cannot be empty.")
+            return
+        res = C.update_one(
+            {"guild_id": self.guild_id, "code": self.code, "user_id": interaction.user.id},
+            {"$set": {"nickname": nick}},
+        )
+        if res.matched_count == 0:
+            await interaction.response.send_message("That's not your code.")
+            return
+        audit(self.guild_id, interaction.user.id, "code_rename", "code", self.code)
+        await interaction.response.send_message(f"✅ Nickname changed to **{nick}**.", ephemeral=True)
+
+
+class SecretRenameButton(discord.ui.Button):
+    def __init__(self, guild_id, code):
+        super().__init__(label="✏️ Rename", style=discord.ButtonStyle.secondary, custom_id=f"secret_rename:{code}")
+        self.guild_id = guild_id
+        self.code = code
+
+    async def callback(self, interaction):
+        doc = C.find_one({"guild_id": self.guild_id, "code": self.code, "user_id": interaction.user.id})
+        if not doc:
+            await interaction.response.send_message("You can only rename your own codes.", ephemeral=True)
+            return
+        await interaction.response.send_modal(
+            SecretRenameModal(self.view.cog, self.guild_id, self.code, doc.get("nickname"))
+        )
+
+
 class SecretReplyButton(discord.ui.Button):
     def __init__(self, guild_id, channel_id, code):
         super().__init__(label="Reply", style=discord.ButtonStyle.secondary, custom_id=f"secret_reply:{code}")
@@ -138,6 +192,7 @@ class SecretReplyView(discord.ui.View):
         super().__init__(timeout=None)
         self.cog = cog
         self.add_item(SecretReplyButton(guild_id, channel_id, code))
+        self.add_item(SecretRenameButton(guild_id, code))
 
 
 class InboxView(discord.ui.View):
@@ -212,11 +267,38 @@ class ConfessCog(commands.Cog):
         msg = "Sample secret message to preview this layout."
         lines = []
         for i, layout in enumerate(SECRET_LAYOUTS):
-            embed = build_secret(i, code, msg, 42)
+            embed = build_secret(i, code, "SampleNick", msg, 42)
             embed.title = f"Secret Layout {i + 1} · {layout['name']}"
             await ctx.send(embed=embed)
             lines.append(f"{i + 1}. {layout['name']}")
         await ctx.send("Reply with `I?layoutset <n>` to choose a secret layout.")
+
+    @commands.command(name="layoutv2")
+    async def layoutv2(self, ctx):
+        """Preview all V2 secret message layouts (owner only)."""
+        if not is_owner(ctx.author.id):
+            await ctx.send("Only the bot owner can view layouts.")
+            return
+        code = "X7KQ9FD2"
+        msg = "Sample secret message to preview this layout."
+        for i, layout in enumerate(SECRET_LAYOUTS_V2):
+            embed = build_secret_v2(i, code, "SampleNick", msg, 42)
+            embed.title = f"V2 Layout {i + 1} · {layout['name']}"
+            await ctx.send(embed=embed)
+        await ctx.send("Reply with `I?layoutv2set <n>` to choose a V2 secret layout.")
+
+    @commands.command(name="layoutv2set")
+    async def layoutv2set(self, ctx, num: int = None):
+        """Choose a V2 secret message layout (owner only)."""
+        if not is_owner(ctx.author.id):
+            await ctx.send("Only the bot owner can set layouts.")
+            return
+        if num is None or num < 1 or num > len(SECRET_LAYOUTS_V2):
+            await ctx.send(f"Pick a number 1-{len(SECRET_LAYOUTS_V2)}.")
+            return
+        set_guild_settings(ctx.guild.id, secret_layout_v2=num - 1, secret_layout_v2_enabled=True)
+        audit(ctx.guild.id, ctx.author.id, "settings", "guild", ctx.guild.id, f"secret layout v2 -> {num}")
+        await ctx.send(f"✅ V2 Secret layout set to **{num} · {SECRET_LAYOUTS_V2[num - 1]['name']}**.")
 
     @commands.command(name="layoutr")
     async def layoutr(self, ctx):
@@ -329,10 +411,15 @@ class ConfessCog(commands.Cog):
             return
 
         post_number = _next_post(gid)
-        layout_idx = _layout_index(gid, "secret_layout", 2)
         code_doc = C.find_one({"guild_id": gid, "code": code, "user_id": uid})
         nickname = code_doc.get("nickname") if code_doc else None
-        embed = build_secret(layout_idx, code, nickname, message, post_number)
+        settings = get_guild_settings(gid)
+        if settings.get("secret_layout_v2_enabled"):
+            layout_idx = _layout_index(gid, "secret_layout_v2", 0)
+            embed = build_secret_v2(layout_idx, code, nickname, message, post_number)
+        else:
+            layout_idx = _layout_index(gid, "secret_layout", 2)
+            embed = build_secret(layout_idx, code, nickname, message, post_number)
         view = SecretReplyView(self, gid, channel.id, code)
         try:
             sent = await channel.send(
@@ -472,6 +559,29 @@ class ConfessCog(commands.Cog):
             return
         audit(interaction.guild.id, interaction.user.id, "code_delete", "code", code)
         await interaction.response.send_message(f"🗑️ Deleted code **`{code}`**.")
+
+    @code.command(name="nickname")
+    @app_commands.describe(code="Pick one of your codes", name="Your new nickname")
+    @app_commands.autocomplete(code=delete_autocomplete)
+    async def code_nickname(self, interaction, code: str, name: str):
+        """Change a code's nickname."""
+        code = code.strip().upper()
+        name = name.strip()
+        if not name:
+            await interaction.response.send_message("Nickname cannot be empty.")
+            return
+        if len(name) > 32:
+            await interaction.response.send_message("Nickname must be 32 characters or less.")
+            return
+        res = C.update_one(
+            {"guild_id": interaction.guild.id, "code": code, "user_id": interaction.user.id},
+            {"$set": {"nickname": name}},
+        )
+        if res.matched_count == 0:
+            await interaction.response.send_message("That's not one of your codes.")
+            return
+        audit(interaction.guild.id, interaction.user.id, "code_rename", "code", code)
+        await interaction.response.send_message(f"✅ Code **`{code}`** nickname changed to **{name}**.")
 
     # ---------- slash: /inbox ----------
 
