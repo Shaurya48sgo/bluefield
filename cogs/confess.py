@@ -329,7 +329,7 @@ class ConfessCog(commands.Cog):
             return
 
         post_number = _next_post(gid)
-        layout_idx = _layout_index(gid, "secret_layout", 14)
+        layout_idx = _layout_index(gid, "secret_layout", 2)
         embed = build_secret(layout_idx, code, message, post_number)
         view = SecretReplyView(self, gid, channel.id, code)
         try:

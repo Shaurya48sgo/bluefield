@@ -113,7 +113,9 @@ def _title_code(code, msg, post):
 
 
 def _stack(code, msg, post):
-    return discord.Embed(title="Secret", color=_color(code), description=f"**`{code}`**\n\n{msg}")
+    e = discord.Embed(title="Secret", color=_color(code), description=f"**`{code}`**\n\n{msg}")
+    e.set_footer(text=f"||Post #{post}||")
+    return e
 
 
 def _post_header(code, msg, post):
