@@ -19,10 +19,8 @@ from cogs.common import (
 from cogs.layouts import (
     REPLY_LAYOUTS,
     SECRET_LAYOUTS,
-    SECRET_LAYOUTS_V2,
     build_reply,
     build_secret,
-    build_secret_v2,
     random_nickname,
 )
 
@@ -259,46 +257,19 @@ class ConfessCog(commands.Cog):
 
     @commands.command(name="layout")
     async def layout(self, ctx):
-        """Preview all 20 secret message layouts (owner only)."""
+        """Preview all secret message layouts (owner only)."""
         if not is_owner(ctx.author.id):
             await ctx.send("Only the bot owner can view layouts.")
             return
-        code = "X7KQ9FD2"
-        msg = "Sample secret message to preview this layout."
+        code = "K7QX9FD2"
+        nick = "ShadowFox"
         lines = []
         for i, layout in enumerate(SECRET_LAYOUTS):
-            embed = build_secret(i, code, "SampleNick", msg, 42)
-            embed.title = f"Secret Layout {i + 1} · {layout['name']}"
+            msg = f"This is a sample secret message — Layout #{i + 1} ({layout['name']})."
+            embed = build_secret(i, code, nick, msg, 42)
             await ctx.send(embed=embed)
             lines.append(f"{i + 1}. {layout['name']}")
         await ctx.send("Reply with `I?layoutset <n>` to choose a secret layout.")
-
-    @commands.command(name="layoutv2")
-    async def layoutv2(self, ctx):
-        """Preview all V2 secret message layouts (owner only)."""
-        if not is_owner(ctx.author.id):
-            await ctx.send("Only the bot owner can view layouts.")
-            return
-        code = "X7KQ9FD2"
-        msg = "Sample secret message to preview this layout."
-        for i, layout in enumerate(SECRET_LAYOUTS_V2):
-            embed = build_secret_v2(i, code, "SampleNick", msg, 42)
-            embed.title = f"V2 Layout {i + 1} · {layout['name']}"
-            await ctx.send(embed=embed)
-        await ctx.send("Reply with `I?layoutv2set <n>` to choose a V2 secret layout.")
-
-    @commands.command(name="layoutv2set")
-    async def layoutv2set(self, ctx, num: int = None):
-        """Choose a V2 secret message layout (owner only)."""
-        if not is_owner(ctx.author.id):
-            await ctx.send("Only the bot owner can set layouts.")
-            return
-        if num is None or num < 1 or num > len(SECRET_LAYOUTS_V2):
-            await ctx.send(f"Pick a number 1-{len(SECRET_LAYOUTS_V2)}.")
-            return
-        set_guild_settings(ctx.guild.id, secret_layout_v2=num - 1, secret_layout_v2_enabled=True)
-        audit(ctx.guild.id, ctx.author.id, "settings", "guild", ctx.guild.id, f"secret layout v2 -> {num}")
-        await ctx.send(f"✅ V2 Secret layout set to **{num} · {SECRET_LAYOUTS_V2[num - 1]['name']}**.")
 
     @commands.command(name="layoutr")
     async def layoutr(self, ctx):
@@ -413,13 +384,8 @@ class ConfessCog(commands.Cog):
         post_number = _next_post(gid)
         code_doc = C.find_one({"guild_id": gid, "code": code, "user_id": uid})
         nickname = code_doc.get("nickname") if code_doc else None
-        settings = get_guild_settings(gid)
-        if settings.get("secret_layout_v2_enabled"):
-            layout_idx = _layout_index(gid, "secret_layout_v2", 0)
-            embed = build_secret_v2(layout_idx, code, nickname, message, post_number)
-        else:
-            layout_idx = _layout_index(gid, "secret_layout", 2)
-            embed = build_secret(layout_idx, code, nickname, message, post_number)
+        layout_idx = _layout_index(gid, "secret_layout", 0)
+        embed = build_secret(layout_idx, code, nickname, message, post_number)
         view = SecretReplyView(self, gid, channel.id, code)
         try:
             sent = await channel.send(

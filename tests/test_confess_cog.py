@@ -529,10 +529,10 @@ def test_build_secret_embed_layout():
     from cogs.layouts import build_secret, SECRET_LAYOUTS
     assert len(SECRET_LAYOUTS) == 20
     e = build_secret(1, "X7KQ9FD2", "ShadowFox", "hello", 42)
+    assert "ShadowFox" in e.description
     assert "X7KQ9FD2" in e.description
     assert "hello" in e.description
     assert "Post #42" in e.description
-    assert e.author.name == "ShadowFox"
 
 
 @skip
@@ -611,13 +611,3 @@ def test_new_code_gets_random_nickname():
         assert code is not None
     finally:
         client.close()
-
-
-@skip
-def test_build_secret_v2_layout():
-    from cogs.layouts import build_secret_v2, SECRET_LAYOUTS_V2
-    assert len(SECRET_LAYOUTS_V2) > 0
-    e = build_secret_v2(0, "X7KQ9FD2", "ShadowFox", "hello", 42)
-    haystack = (e.description or "") + " ".join(f.value for f in e.fields)
-    assert "X7KQ9FD2" in haystack
-    assert e.author.name == "ShadowFox"

@@ -31,47 +31,42 @@ def _color(code):
     return discord.Colour(palette[h % len(palette)])
 
 
-# ---------------------------------------------------------------------------
-# Secret layouts. Fixed structure: nickname = author badge (set by build_secret),
-# description = code-box + message + "-# Post #N" at the bottom.
-# Each layout only varies the decoration around that structure.
-# ---------------------------------------------------------------------------
-
-def _body(code, msg, post):
-    return f"```{code}```\n{msg}\n\n-# Post #{post}"
-
-
-def _body_div(code, msg, post, div):
-    return f"```{code}```\n{div}\n\n{msg}\n\n-# Post #{post}"
-
-
-SECRET_LAYOUTS = [
-    {"name": "Clean", "build": lambda c, m, p: _embed(None, _body(c, m, p), c)},
-    {"name": "Titled Secret", "build": lambda c, m, p: _embed("Secret", _body(c, m, p), c)},
-    {"name": "Divider", "build": lambda c, m, p: _embed(None, _body_div(c, m, p, "━━━━━━━━━━"), c)},
-    {"name": "Titled Divider", "build": lambda c, m, p: _embed("Secret", _body_div(c, m, p, "━━━━━━━━━━"), c)},
-    {"name": "Stars", "build": lambda c, m, p: _embed(None, _body_div(c, m, p, "✦ ━━━━ ✦"), c)},
-    {"name": "Titled Stars", "build": lambda c, m, p: _embed("Secret", _body_div(c, m, p, "✦ ━━━━ ✦"), c)},
-    {"name": "Dashes", "build": lambda c, m, p: _embed(None, _body_div(c, m, p, "──────────"), c)},
-    {"name": "Titled Dashes", "build": lambda c, m, p: _embed("Secret", _body_div(c, m, p, "──────────"), c)},
-    {"name": "Equals", "build": lambda c, m, p: _embed(None, _body_div(c, m, p, "══════════"), c)},
-    {"name": "Titled Equals", "build": lambda c, m, p: _embed("Secret", _body_div(c, m, p, "══════════"), c)},
-    {"name": "Brackets", "build": lambda c, m, p: _embed(None, _body_div(c, m, p, "──────────"), c)},
-    {"name": "Double divider", "build": lambda c, m, p: _embed(None, f"```{c}```\n━━━━━━━━━━\n{'_' * 10}\n\n{m}\n\n-# Post #{p}")},
-    {"name": "Arrows", "build": lambda c, m, p: _embed(None, _body_div(c, m, p, "➜ ───── ➜"), c)},
-    {"name": "Titled Arrows", "build": lambda c, m, p: _embed("Secret", _body_div(c, m, p, "➜ ───── ➜"), c)},
-    {"name": "Tilde", "build": lambda c, m, p: _embed(None, _body_div(c, m, p, "~~~~~~~~~~"), c)},
-    {"name": "Titled Tilde", "build": lambda c, m, p: _embed("Secret", _body_div(c, m, p, "~~~~~~~~~~"), c)},
-    {"name": "Hearts", "build": lambda c, m, p: _embed(None, _body_div(c, m, p, "♥ ━━━━ ♥"), c)},
-    {"name": "Titled Hearts", "build": lambda c, m, p: _embed("Secret", _body_div(c, m, p, "♥ ━━━━ ♥"), c)},
-    {"name": "Bold divider", "build": lambda c, m, p: _embed(None, _body_div(c, m, p, "━━━━━━━━━━"), c)},
-    {"name": "Minimal", "build": lambda c, m, p: _embed(None, f"```{c}```\n{m}\n\n-# Post #{p}", c)},
-]
-
-
 def _embed(title, desc, code):
     e = discord.Embed(title=title, color=_color(code), description=desc)
     return e
+
+
+# ---------------------------------------------------------------------------
+# Secret layouts. Fixed structure (in the description):
+#   **NICKNAME** <joiner> `CODE`   <- same line, code copyable
+#   message
+#   -# Post #N                     <- small subtext at the bottom
+# No separators between code and message.
+# ---------------------------------------------------------------------------
+
+def _s_build(code, nick, msg, post, title=None, joiner="·"):
+    line = f"**{nick}** {joiner} `{code}`"
+    desc = f"{line}\n\n{msg}\n\n-# Post #{post}"
+    e = discord.Embed(title=title, color=_color(code), description=desc)
+    return e
+
+
+def _make_build(title, joiner):
+    return lambda c, n, m, p: _s_build(c, n, m, p, title=title, joiner=joiner)
+
+
+TITLES = [None, "Secret", "Anonymous", "Message", "New", "Incoming"]
+JOINERS = ["·", "—", "|", "➜", "»", "~", ":", "@", "→", "+", "=", "//", "::", "#", "*", "-", "❯", "►", "×", "∧"]
+
+SECRET_LAYOUTS = [
+    {"name": f"{('No title' if t is None else t)} · {j}", "build": _make_build(t, j)}
+    for t, j in zip(TITLES * 4, JOINERS)
+]
+
+
+def build_secret(layout_index, code, nickname, message, post_number):
+    layout_index = max(0, min(layout_index, len(SECRET_LAYOUTS) - 1))
+    return SECRET_LAYOUTS[layout_index]["build"](code, nickname, message, post_number)
 
 
 # ---------------------------------------------------------------------------
@@ -107,82 +102,9 @@ REPLY_LAYOUTS = [
 ]
 
 
-def build_secret(layout_index, code, nickname, message, post_number):
-    layout_index = max(0, min(layout_index, len(SECRET_LAYOUTS) - 1))
-    embed = SECRET_LAYOUTS[layout_index]["build"](code, message, post_number)
-    if nickname:
-        embed.set_author(name=nickname)
-    return embed
-
-
 def build_reply(layout_index, reply_code, reply_nick, target_code, target_nick, target_post, text):
     layout_index = max(0, min(layout_index, len(REPLY_LAYOUTS) - 1))
     embed = REPLY_LAYOUTS[layout_index]["build"](reply_code, target_code, target_post, text)
     if reply_nick:
         embed.set_author(name=reply_nick)
-    return embed
-
-
-# ---------------------------------------------------------------------------
-# V2 secret layouts: richer embeds (author icon, fields, thumbnail, footer icon)
-# ---------------------------------------------------------------------------
-
-def _v2_fields(code, msg, post, icon):
-    e = discord.Embed(color=_color(code))
-    e.set_author(name="Secret", icon_url=icon)
-    e.add_field(name="Code", value=f"```{code}```", inline=False)
-    e.add_field(name="Message", value=msg, inline=False)
-    e.set_footer(text=f"-# Post #{post}")
-    return e
-
-
-def _v2_icon(code, msg, post, icon):
-    e = discord.Embed(color=_color(code), description=f"```{code}```\n{msg}\n\n-# Post #{post}")
-    e.set_author(name="Secret", icon_url=icon)
-    return e
-
-
-def _v2_thumb(code, msg, post, icon):
-    e = discord.Embed(color=_color(code), description=f"```{code}```\n{msg}\n\n-# Post #{post}")
-    e.set_thumbnail(url=icon)
-    return e
-
-
-def _v2_footericon(code, msg, post, icon):
-    e = discord.Embed(color=_color(code), description=f"```{code}```\n{msg}")
-    e.set_footer(text=f"-# Post #{post}", icon_url=icon)
-    return e
-
-
-def _v2_fieldcode(code, msg, post, icon):
-    e = discord.Embed(color=_color(code), description=msg)
-    e.set_author(name="Secret", icon_url=icon)
-    e.add_field(name="Code", value=f"```{code}```", inline=False)
-    e.set_footer(text=f"-# Post #{post}")
-    return e
-
-
-V2_ICON = "https://cdn.discordapp.com/emojis/1080190630834855956.webp?size=64"
-V2_ICON2 = "https://cdn.discordapp.com/emojis/1069157221050552441.webp?size=64"
-V2_ICON3 = "https://cdn.discordapp.com/emojis/1175413573943889920.webp?size=64"
-
-SECRET_LAYOUTS_V2 = [
-    {"name": "V2 Fields", "build": lambda c, m, p: _v2_fields(c, m, p, V2_ICON)},
-    {"name": "V2 Icon", "build": lambda c, m, p: _v2_icon(c, m, p, V2_ICON)},
-    {"name": "V2 Thumbnail", "build": lambda c, m, p: _v2_thumb(c, m, p, V2_ICON2)},
-    {"name": "V2 Footer icon", "build": lambda c, m, p: _v2_footericon(c, m, p, V2_ICON3)},
-    {"name": "V2 Field code", "build": lambda c, m, p: _v2_fieldcode(c, m, p, V2_ICON)},
-    {"name": "V2 Icon 2", "build": lambda c, m, p: _v2_icon(c, m, p, V2_ICON2)},
-    {"name": "V2 Thumb 2", "build": lambda c, m, p: _v2_thumb(c, m, p, V2_ICON3)},
-    {"name": "V2 Footer icon 2", "build": lambda c, m, p: _v2_footericon(c, m, p, V2_ICON2)},
-    {"name": "V2 Fields 2", "build": lambda c, m, p: _v2_fields(c, m, p, V2_ICON2)},
-    {"name": "V2 Icon 3", "build": lambda c, m, p: _v2_icon(c, m, p, V2_ICON3)},
-]
-
-
-def build_secret_v2(layout_index, code, nickname, message, post_number):
-    layout_index = max(0, min(layout_index, len(SECRET_LAYOUTS_V2) - 1))
-    embed = SECRET_LAYOUTS_V2[layout_index]["build"](code, message, post_number)
-    if nickname:
-        embed.set_author(name=nickname)
     return embed
