@@ -116,52 +116,6 @@ class ReplyCodeSelectView(discord.ui.View):
         )
 
 
-class SecretRenameModal(discord.ui.Modal):
-    def __init__(self, cog, guild_id, code, current_nick):
-        super().__init__(title="Change nickname")
-        self.cog = cog
-        self.guild_id = guild_id
-        self.code = code
-        self.nick_input = discord.ui.TextInput(
-            label="New nickname",
-            max_length=32,
-            required=True,
-            default=current_nick or "",
-        )
-        self.add_item(self.nick_input)
-
-    async def on_submit(self, interaction):
-        nick = self.nick_input.value.strip()
-        if not nick:
-            await interaction.response.send_message("Nickname cannot be empty.")
-            return
-        res = C.update_one(
-            {"guild_id": self.guild_id, "code": self.code, "user_id": interaction.user.id},
-            {"$set": {"nickname": nick}},
-        )
-        if res.matched_count == 0:
-            await interaction.response.send_message("That's not your code.")
-            return
-        audit(self.guild_id, interaction.user.id, "code_rename", "code", self.code)
-        await interaction.response.send_message(f"✅ Nickname changed to **{nick}**.", ephemeral=True)
-
-
-class SecretRenameButton(discord.ui.Button):
-    def __init__(self, guild_id, code):
-        super().__init__(label="✏️ Rename", style=discord.ButtonStyle.secondary, custom_id=f"secret_rename:{code}")
-        self.guild_id = guild_id
-        self.code = code
-
-    async def callback(self, interaction):
-        doc = C.find_one({"guild_id": self.guild_id, "code": self.code, "user_id": interaction.user.id})
-        if not doc:
-            await interaction.response.send_message("You can only rename your own codes.", ephemeral=True)
-            return
-        await interaction.response.send_modal(
-            SecretRenameModal(self.view.cog, self.guild_id, self.code, doc.get("nickname"))
-        )
-
-
 class SecretReplyButton(discord.ui.Button):
     def __init__(self, guild_id, channel_id, code):
         super().__init__(label="Reply", style=discord.ButtonStyle.secondary, custom_id=f"secret_reply:{code}")
@@ -190,7 +144,6 @@ class SecretReplyView(discord.ui.View):
         super().__init__(timeout=None)
         self.cog = cog
         self.add_item(SecretReplyButton(guild_id, channel_id, code))
-        self.add_item(SecretRenameButton(guild_id, code))
 
 
 class InboxView(discord.ui.View):
