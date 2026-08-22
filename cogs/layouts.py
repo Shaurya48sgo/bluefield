@@ -70,12 +70,12 @@ def _make_build(title, joiner):
     return lambda c, n, m, p: _s_build(c, n, m, p, title=title, joiner=joiner)
 
 
-TITLES = [None, "Secret", "Message", "New", "Incoming"]
+TITLES = [None, "Secret"]
 JOINERS = ["·", "—", "|", "➜", "»", "~", ":", "@", "→", "+", "=", "//", "::", "#", "*", "-", "❯", "►", "×", "∧"]
 
 SECRET_LAYOUTS = [
     {"name": f"{('No title' if t is None else t)} · {j}", "build": _make_build(t, j)}
-    for t, j in zip(TITLES * 4, JOINERS)
+    for t, j in zip(TITLES * 10, JOINERS)
 ]
 
 

@@ -649,7 +649,7 @@ class ConfessCog(commands.Cog):
             return True
         return False
 
-    async def _owner_name(self, uid):
+    def _owner_name(self, uid):
         owner = self.bot.get_user(uid)
         return f"{owner} ({uid})" if owner else str(uid)
 
