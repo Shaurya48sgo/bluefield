@@ -27,9 +27,15 @@ async def on_ready():
     print(f"{bot.user} is ready!")
     try:
         synced = await bot.tree.sync()
-        print(f"Synced {len(synced)} slash command(s): {[c.name for c in synced]}")
+        print(f"Synced {len(synced)} global slash command(s)")
     except Exception as e:
-        print(f"Failed to sync slash commands: {e}")
+        print(f"Failed to sync global slash commands: {e}")
+    for guild in bot.guilds:
+        try:
+            await bot.tree.sync(guild=guild)
+            print(f"Synced commands for guild {guild.name} ({guild.id})")
+        except Exception as e:
+            print(f"Failed to sync guild {guild.name}: {e}")
     if OWNER_ID:
         try:
             owner = await bot.fetch_user(int(OWNER_ID))
@@ -37,6 +43,15 @@ async def on_ready():
             print(f"Pinged owner {owner}.")
         except Exception as e:
             print(f"Could not ping owner: {e}")
+
+
+@bot.tree.error
+async def on_app_command_error(interaction, error):
+    try:
+        await interaction.response.send_message(f"⚠️ {error}", ephemeral=True)
+    except Exception:
+        pass
+    print(f"Command error: {error}")
 
 
 async def setup_hook():
