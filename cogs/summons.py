@@ -744,12 +744,20 @@ class SummonsCog(commands.Cog):
             self.last_summon[member.id] = now
 
         guild = interaction.guild
+        allowed = discord.AllowedMentions(users=True, roles=True, everyone=False)
         if real_role is not None:
             member_ids = [m for m in real_role.members if not m.bot]
             bold = f"**[ {real_role.name} ]** has been summoned !"
             await interaction.response.defer()
             if member_ids:
-                await interaction.followup.send(" ".join(m.mention for m in member_ids))
+                chunks = [member_ids[i : i + 90] for i in range(0, len(member_ids), 90)]
+                msgs = []
+                for c in chunks:
+                    msg = await interaction.channel.send(
+                        " ".join(m.mention for m in c), allowed_mentions=allowed
+                    )
+                    msgs.append(msg)
+                asyncio.create_task(self._cleanup_pings(msgs))
             await interaction.followup.send(bold)
             audit(guild.id, member.id, "summon", "role", real_role.id, real_role.name)
             await self.log_activity(
@@ -767,8 +775,10 @@ class SummonsCog(commands.Cog):
             chunks = [member_ids[i : i + 90] for i in range(0, len(member_ids), 90)]
             msgs = []
             for c in chunks:
-                m = await interaction.followup.send(" ".join(_mention(uid) for uid in c))
-                msgs.append(m)
+                msg = await interaction.channel.send(
+                    " ".join(_mention(uid) for uid in c), allowed_mentions=allowed
+                )
+                msgs.append(msg)
             await interaction.followup.send(
                 bold,
                 view=MembersButton(self, guild.id, str(doc["_id"])),

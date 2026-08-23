@@ -62,6 +62,9 @@ def make_interaction(member, guild=None):
     interaction.user = member
     interaction.guild = guild
     interaction.channel_id = 555
+    channel = MagicMock()
+    channel.send = AsyncMock(return_value=AsyncMock())
+    interaction.channel = channel
     interaction.response.send_message = AsyncMock()
     interaction.response.send_modal = AsyncMock()
     interaction.response.defer = AsyncMock()
