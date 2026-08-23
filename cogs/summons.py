@@ -749,10 +749,8 @@ class SummonsCog(commands.Cog):
             bold = f"**[ {real_role.name} ]** has been summoned !"
             await interaction.response.defer()
             if member_ids:
-                first = await interaction.followup.send(" ".join(m.mention for m in member_ids))
-                await first.edit(content=bold)
-            else:
-                await interaction.followup.send(bold)
+                await interaction.followup.send(" ".join(m.mention for m in member_ids))
+            await interaction.followup.send(bold)
             audit(guild.id, member.id, "summon", "role", real_role.id, real_role.name)
             await self.log_activity(
                 guild,
@@ -771,20 +769,24 @@ class SummonsCog(commands.Cog):
             for c in chunks:
                 m = await interaction.followup.send(" ".join(_mention(uid) for uid in c))
                 msgs.append(m)
-            await msgs[0].edit(
-                content=bold,
+            await interaction.followup.send(
+                bold,
                 view=MembersButton(self, guild.id, str(doc["_id"])),
             )
-            for m in msgs[1:]:
-                try:
-                    await m.delete()
-                except Exception:
-                    pass
+            asyncio.create_task(self._cleanup_pings(msgs))
         audit(guild.id, member.id, "summon", "summon", str(doc["_id"]), doc["name"])
         await self.log_activity(
             guild,
             f"🔔 {member.mention} summoned **{doc['name']}** ({len(member_ids)} members)",
         )
+
+    async def _cleanup_pings(self, msgs):
+        await asyncio.sleep(10)
+        for m in msgs:
+            try:
+                await m.delete()
+            except Exception:
+                pass
 
     # ---------- slash: create / edit / delete ----------
 
