@@ -319,7 +319,7 @@ class ConfessCog(commands.Cog):
         await ctx.send(
             "This is the **unified** reply layout:",
             embed=build_reply(
-                "REPLYCODE", "SwiftWolf", "ORIGCODE", "NightOwl", 7, "Sample reply text.",
+                "REPLYCODE", "SwiftWolf", "ORIGCODE", "NightOwl", 8, 7, "Sample reply text.",
                 link="https://discord.com/channels/1/2/3",
             ),
         )
@@ -439,7 +439,10 @@ class ConfessCog(commands.Cog):
         link = None
         if original_message is not None:
             link = _jump_link(guild_id, channel_id, original_message.id)
-        embed = build_reply(code, reply_nick, original_code, target_nick, target_post, text, link=link, color=reply_color)
+        reply_post = _next_post(guild_id)
+        embed = build_reply(
+            code, reply_nick, original_code, target_nick, reply_post, target_post, text, link=link, color=reply_color
+        )
         channel = interaction.guild.get_channel(channel_id)
         if channel is None:
             await interaction.response.send_message("That channel no longer exists.")
@@ -457,6 +460,17 @@ class ConfessCog(commands.Cog):
         except Exception as e:
             await interaction.response.send_message(f"Failed to post reply: {e}")
             return
+        M.insert_one(
+            {
+                "guild_id": guild_id,
+                "channel_id": channel_id,
+                "message_id": sent.id,
+                "code": code,
+                "owner_id": interaction.user.id,
+                "post_number": reply_post,
+                "created_at": datetime.now(timezone.utc),
+            }
+        )
         owner = C.find_one({"code": original_code})
         if owner:
             I.insert_one(

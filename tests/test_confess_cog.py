@@ -519,6 +519,10 @@ def test_post_reply_uses_reference_to_original():
         kwargs = channel.send.await_args.kwargs
         assert kwargs["reference"] == original
         assert db["inbox"].count_documents({"user_id": 100, "code": "ORIGCODE"}) == 1
+        # reply got its own post number stored
+        sm = db["secret_messages"].find_one({"message_id": channel.send.return_value.id, "code": "REPLYCODE"})
+        assert sm is not None
+        assert sm.get("post_number") == 1
     finally:
         client.close()
 
@@ -536,10 +540,11 @@ def test_build_secret_embed_layout():
 @skip
 def test_build_reply_embed_layout():
     from cogs.layouts import build_reply
-    e = build_reply("REPLYCODE", "ReplyNick", "ORIGCODE", "TargetNick", 7, "hello")
+    e = build_reply("REPLYCODE", "ReplyNick", "ORIGCODE", "TargetNick", 8, 7, "hello")
     assert "REPLYCODE" in e.description
     assert "ORIGCODE" in e.description
-    assert "7" in e.description
+    assert "Post #8" in e.description
+    assert "Post #7" in e.description
     assert "ReplyNick" in e.description
     assert "TargetNick" in e.description
 

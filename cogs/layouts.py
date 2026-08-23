@@ -77,9 +77,9 @@ def build_secret(code, nickname, message, post_number, color=None):
     return discord.Embed(color=code_color(code, color), description=desc)
 
 
-def build_reply(reply_code, reply_nick, target_code, target_nick, target_post, text, link=None, color=None):
+def build_reply(reply_code, reply_nick, target_code, target_nick, reply_post, target_post, text, link=None, color=None):
     line = f"**{reply_nick or '?'}** · `{reply_code}`"
-    footer = f"-# Replied to Post #{target_post or '?'} · **{target_nick or '?'}** (`{target_code}`)"
+    footer = f"-# Post #{reply_post or '?'} · Replied to Post #{target_post or '?'} · **{target_nick or '?'}** (`{target_code}`)"
     if link:
         footer += f" · [jump]({link})"
     desc = f"{line}\n\n{text}\n\n{footer}"
