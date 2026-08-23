@@ -57,7 +57,7 @@ class MembersButton(discord.ui.View):
             names.append(m.mention if m else _mention(uid))
         embed.description = (" ".join(names)) if names else "No members yet."
         embed.set_footer(text=f"{len(member_ids)} members")
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 class EasyJoinView(discord.ui.View):
