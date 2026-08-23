@@ -447,6 +447,7 @@ def test_reply_generate_new_creates_code_and_opens_modal():
     client, db = get_test_db()
     try:
         cog = make_cog(db)
+        from cogs.confess import ReplyColorPickView
         db["guild_settings"].insert_one({"guild_id": 1, "confess_max_codes": 2})
         add_code(db, uid=100, code="MYCODE")
         docs = list(db["anon_codes"].find({"user_id": 100}))
@@ -460,7 +461,8 @@ def test_reply_generate_new_creates_code_and_opens_modal():
         interaction.response.send_message = AsyncMock()
         asyncio.run(view.on_select(interaction))
         assert db["anon_codes"].count_documents({"user_id": 100}) == 2
-        interaction.response.send_modal.assert_awaited_once()
+        interaction.response.send_message.assert_awaited_once()
+        assert isinstance(interaction.response.send_message.await_args.kwargs["view"], ReplyColorPickView)
     finally:
         client.close()
 
@@ -801,32 +803,35 @@ def test_color_pick_posts_with_color():
 
 
 @skip
-def test_reply_new_code_modal_then_color_then_reply_modal():
+def test_reply_generate_new_flow_color_then_compose_modal():
     client, db = get_test_db()
     try:
         cog = make_cog(db)
-        from cogs.confess import ReplyNewCodeModal, ReplyColorPickView, SECRET_COLORS
+        from cogs.confess import ReplyColorPickView, ReplyComposeModal, SECRET_COLORS
         member = make_member(uid=100)
-        # simulate on_select creating the code first, then nickname modal
+        # simulate on_select creating the code first, then color picker
         code = cog._new_code(1, 100)
-        modal = ReplyNewCodeModal(cog, 1, 555, "ORIGINAL", code, "RandomNick", MagicMock())
-        modal.nick_input = MagicMock()
-        modal.nick_input.value = "CoolNick"
-        submit = make_interaction(member, channel_id=555)
-        submit.response.send_message = AsyncMock()
-        asyncio.run(modal.on_submit(submit))
-        assert db["anon_codes"].count_documents({"user_id": 100}) == 1
-        assert db["anon_codes"].find_one({"code": code})["nickname"] == "CoolNick"
-        submit.response.send_message.assert_awaited_once()
-        view = submit.response.send_message.await_args.kwargs["view"]
-        assert isinstance(view, ReplyColorPickView)
+        pick_interaction = make_interaction(member, channel_id=555)
+        pick_interaction.response.send_modal = AsyncMock()
+        view = ReplyColorPickView(cog, pick_interaction, 1, 555, "ORIGINAL", code, "RandomNick", MagicMock())
         assert len(view.color_select.options) == len(SECRET_COLORS)
-        # pick a color -> should open reply modal
-        color_submit = make_interaction(member, channel_id=555)
-        color_submit.response.send_modal = AsyncMock()
         view.color_select = MagicMock()
         view.color_select.values = ["12345"]
-        asyncio.run(view.on_color(color_submit))
-        color_submit.response.send_modal.assert_awaited_once()
+        asyncio.run(view.on_confirm(pick_interaction))
+        assert db["anon_codes"].find_one({"code": code})["color"] == 12345
+        pick_interaction.response.send_modal.assert_awaited_once()
+        modal = pick_interaction.response.send_modal.await_args.args[0]
+        assert isinstance(modal, ReplyComposeModal)
+        # fill in nickname + reply text
+        modal.nick_input = MagicMock()
+        modal.nick_input.value = "CoolNick"
+        modal.text_input = MagicMock()
+        modal.text_input.value = "hello reply"
+        submit = make_interaction(member, channel_id=555)
+        submit.response.send_message = AsyncMock()
+        cog.post_reply = AsyncMock()
+        asyncio.run(modal.on_submit(submit))
+        assert db["anon_codes"].find_one({"code": code})["nickname"] == "CoolNick"
+        cog.post_reply.assert_awaited_once()
     finally:
         client.close()

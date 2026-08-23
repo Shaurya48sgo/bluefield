@@ -118,10 +118,17 @@ class ReplyCodeSelectView(discord.ui.View):
                 return
             code = self.cog._new_code(self.guild_id, self.author.id)
             code_doc = C.find_one({"code": code})
-            await interaction.response.send_modal(
-                ReplyNewCodeModal(
-                    self.cog, self.guild_id, self.channel_id, self.original_code, code, code_doc.get("nickname"), self.original_message
-                )
+            embed = discord.Embed(
+                title="Pick a color",
+                color=discord.Colour(0x9B59B6),
+                description="Select the color for this code's messages (a color is pre-selected), then press **Confirm**.",
+            )
+            await interaction.response.send_message(
+                embed=embed,
+                view=ReplyColorPickView(
+                    self.cog, interaction, self.guild_id, self.channel_id, self.original_code, code, code_doc.get("nickname"), self.original_message
+                ),
+                ephemeral=True,
             )
             return
         await interaction.response.send_modal(
@@ -257,7 +264,7 @@ class ColorPickView(discord.ui.View):
 
 
 class ReplyColorPickView(discord.ui.View):
-    def __init__(self, cog, interaction, guild_id, channel_id, original_code, code, original_message):
+    def __init__(self, cog, interaction, guild_id, channel_id, original_code, code, default_nick, original_message):
         super().__init__(timeout=300)
         self.cog = cog
         self.interaction = interaction
@@ -265,6 +272,7 @@ class ReplyColorPickView(discord.ui.View):
         self.channel_id = channel_id
         self.original_code = original_code
         self.code = code
+        self.default_nick = default_nick
         self.original_message = original_message
         options = []
         first = True
@@ -282,20 +290,26 @@ class ReplyColorPickView(discord.ui.View):
         self.color_select = discord.ui.Select(placeholder="Color", options=options)
         self.color_select.callback = self.on_color
         self.add_item(self.color_select)
+        self.confirm = discord.ui.Button(label="Confirm", style=discord.ButtonStyle.success)
+        self.confirm.callback = self.on_confirm
+        self.add_item(self.confirm)
 
     async def on_color(self, interaction):
+        await interaction.response.defer()
+
+    async def on_confirm(self, interaction):
         color_value = int(self.color_select.values[0])
         C.update_one({"code": self.code, "user_id": interaction.user.id}, {"$set": {"color": color_value}})
         await interaction.response.send_modal(
-            SecretReplyModal(
-                self.cog, self.guild_id, self.channel_id, self.original_code, self.code, self.original_message
+            ReplyComposeModal(
+                self.cog, self.guild_id, self.channel_id, self.original_code, self.code, self.default_nick, self.original_message
             )
         )
 
 
-class ReplyNewCodeModal(discord.ui.Modal):
+class ReplyComposeModal(discord.ui.Modal):
     def __init__(self, cog, guild_id, channel_id, original_code, code, default_nick, original_message):
-        super().__init__(title="Your new code")
+        super().__init__(title=f"Reply as code {code}")
         self.cog = cog
         self.guild_id = guild_id
         self.channel_id = channel_id
@@ -309,25 +323,27 @@ class ReplyNewCodeModal(discord.ui.Modal):
             required=True,
             default=default_nick or example,
         )
+        self.text_input = discord.ui.TextInput(
+            label="Your reply",
+            style=discord.TextStyle.paragraph,
+            max_length=2000,
+            required=True,
+        )
         self.add_item(self.nick_input)
+        self.add_item(self.text_input)
 
     async def on_submit(self, interaction):
         nick = self.nick_input.value.strip()
+        text = self.text_input.value.strip()
         if not nick:
             await interaction.response.send_message("Nickname cannot be empty.", ephemeral=True)
             return
+        if not text:
+            await interaction.response.send_message("Reply cannot be empty.", ephemeral=True)
+            return
         C.update_one({"code": self.code, "user_id": interaction.user.id}, {"$set": {"nickname": nick}})
-        embed = discord.Embed(
-            title="Pick a color",
-            color=discord.Colour(0x9B59B6),
-            description="Select the color for this code's messages (a color is pre-selected).",
-        )
-        await interaction.response.send_message(
-            embed=embed,
-            view=ReplyColorPickView(
-                self.cog, interaction, self.guild_id, self.channel_id, self.original_code, self.code, self.original_message
-            ),
-            ephemeral=True,
+        await self.cog.post_reply(
+            interaction, self.guild_id, self.channel_id, self.original_code, self.code, text, self.original_message
         )
 
 
