@@ -98,6 +98,7 @@ class HelpView(discord.ui.View):
                     (f"{self.prefix}dev <@user> -y|-r", "Add/remove a dev (owner/server owner only). Devs have owner powers except managing devs."),
                     (f"{self.prefix}purge", "Clean up stale summon entries."),
                     (f"{self.prefix}prefix_now <new prefix>", "Change the bot's prefix (owner only)."),
+                    (f"{self.prefix}colors", "DM the owner every usable embed colour, numbered and shown in its own colour (owner only)."),
                 ],
             },
             {
@@ -167,6 +168,36 @@ class CoreCog(commands.Cog):
             await ctx.send(f"✅ {user.mention} is no longer a dev.")
         else:
             await ctx.send("Usage: `I?dev <user> -y|-r` (-y add, -r remove)")
+
+    @commands.command(name="colors")
+    async def colors(self, ctx):
+        """DM the owner every usable embed colour, numbered and shown in its own colour."""
+        if not is_owner(ctx.author.id):
+            await ctx.send("Only the bot owner can use this.")
+            return
+        seen = {}
+        for name in sorted(dir(discord.Colour)):
+            if name.startswith("_") or name == "random":
+                continue
+            try:
+                val = getattr(discord.Colour, name)()
+            except Exception:
+                continue
+            if not isinstance(val, discord.Colour):
+                continue
+            if val.value in seen:
+                seen[val.value] += "/" + name
+                continue
+            seen[val.value] = name
+        items = sorted(seen.items(), key=lambda t: t[1])
+        embeds = [
+            discord.Embed(title=f"{i}. {name} — #{value:06X}", colour=discord.Colour(value))
+            for i, (value, name) in enumerate(items, 1)
+        ]
+        for i in range(0, len(embeds), 10):
+            await ctx.author.send(embeds=embeds[i : i + 10])
+        audit(ctx.guild.id, ctx.author.id, "colors", "guild", ctx.guild.id)
+        await ctx.send(f"📩 DM'd you **{len(embeds)}** embed colours.")
 
     @commands.command(name="activitychannel")
     @has_admin_or_dev()
