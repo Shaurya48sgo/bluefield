@@ -199,8 +199,12 @@ class NewSecretModal(discord.ui.Modal):
         self.guild_id = guild_id
         self.code = code
         self.message = message
+        example = random_nickname()
         self.nick_input = discord.ui.TextInput(
-            label="Nickname", max_length=32, required=True, default=default_nick or ""
+            label="Nickname (e.g. " + example + ")",
+            max_length=32,
+            required=True,
+            default=default_nick or example,
         )
         self.add_item(self.nick_input)
 
@@ -213,8 +217,7 @@ class NewSecretModal(discord.ui.Modal):
         embed = discord.Embed(
             title="Pick a color",
             color=discord.Colour(0x9B59B6),
-            description="Choose the color for this code's messages. "
-            + " ".join(f"{e} {n}" for e, n in COLOR_EMOJIS.items()),
+            description="Select the color for this code's messages (a color is pre-selected).",
         )
         await interaction.response.send_message(
             embed=embed, view=ColorPickView(self.cog, interaction, self.guild_id, self.code, self.message),
@@ -230,18 +233,27 @@ class ColorPickView(discord.ui.View):
         self.guild_id = guild_id
         self.code = code
         self.message = message
+        options = []
+        first = True
         for name, value in SECRET_COLORS.items():
-            emoji = COLOR_EMOJIS.get(name)
-            btn = discord.ui.Button(label=name, style=discord.ButtonStyle.secondary, emoji=emoji)
-            btn.callback = self.make_pick(value)
-            self.add_item(btn)
+            options.append(
+                discord.SelectOption(
+                    label=name,
+                    value=str(value),
+                    emoji=COLOR_EMOJIS.get(name),
+                    default=first,
+                    description=f"#{value:06X}",
+                )
+            )
+            first = False
+        self.color_select = discord.ui.Select(placeholder="Color", options=options)
+        self.color_select.callback = self.on_color
+        self.add_item(self.color_select)
 
-    def make_pick(self, color_value):
-        async def pick(interaction, button):
-            C.update_one({"code": self.code, "user_id": interaction.user.id}, {"$set": {"color": color_value}})
-            await self.cog._post_secret(interaction, self.guild_id, self.code, self.message, color_value)
-
-        return pick
+    async def on_color(self, interaction):
+        color_value = int(self.color_select.values[0])
+        C.update_one({"code": self.code, "user_id": interaction.user.id}, {"$set": {"color": color_value}})
+        await self.cog._post_secret(interaction, self.guild_id, self.code, self.message, color_value)
 
 
 class ReplyColorPickView(discord.ui.View):
@@ -254,22 +266,31 @@ class ReplyColorPickView(discord.ui.View):
         self.original_code = original_code
         self.code = code
         self.original_message = original_message
+        options = []
+        first = True
         for name, value in SECRET_COLORS.items():
-            emoji = COLOR_EMOJIS.get(name)
-            btn = discord.ui.Button(label=name, style=discord.ButtonStyle.secondary, emoji=emoji)
-            btn.callback = self.make_pick(value)
-            self.add_item(btn)
-
-    def make_pick(self, color_value):
-        async def pick(interaction, button):
-            C.update_one({"code": self.code, "user_id": interaction.user.id}, {"$set": {"color": color_value}})
-            await interaction.response.send_modal(
-                SecretReplyModal(
-                    self.cog, self.guild_id, self.channel_id, self.original_code, self.code, self.original_message
+            options.append(
+                discord.SelectOption(
+                    label=name,
+                    value=str(value),
+                    emoji=COLOR_EMOJIS.get(name),
+                    default=first,
+                    description=f"#{value:06X}",
                 )
             )
+            first = False
+        self.color_select = discord.ui.Select(placeholder="Color", options=options)
+        self.color_select.callback = self.on_color
+        self.add_item(self.color_select)
 
-        return pick
+    async def on_color(self, interaction):
+        color_value = int(self.color_select.values[0])
+        C.update_one({"code": self.code, "user_id": interaction.user.id}, {"$set": {"color": color_value}})
+        await interaction.response.send_modal(
+            SecretReplyModal(
+                self.cog, self.guild_id, self.channel_id, self.original_code, self.code, self.original_message
+            )
+        )
 
 
 class ReplyNewCodeModal(discord.ui.Modal):
@@ -281,8 +302,12 @@ class ReplyNewCodeModal(discord.ui.Modal):
         self.original_code = original_code
         self.code = code
         self.original_message = original_message
+        example = random_nickname()
         self.nick_input = discord.ui.TextInput(
-            label="Nickname", max_length=32, required=True, default=default_nick or ""
+            label="Nickname (e.g. " + example + ")",
+            max_length=32,
+            required=True,
+            default=default_nick or example,
         )
         self.add_item(self.nick_input)
 
@@ -295,8 +320,7 @@ class ReplyNewCodeModal(discord.ui.Modal):
         embed = discord.Embed(
             title="Pick a color",
             color=discord.Colour(0x9B59B6),
-            description="Choose the color for this code's messages. "
-            + " ".join(f"{e} {n}" for e, n in COLOR_EMOJIS.items()),
+            description="Select the color for this code's messages (a color is pre-selected).",
         )
         await interaction.response.send_message(
             embed=embed,

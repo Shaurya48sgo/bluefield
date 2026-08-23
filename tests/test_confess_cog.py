@@ -768,7 +768,7 @@ def test_new_secret_modal_sets_nickname_and_shows_colors():
         submit.response.send_message.assert_awaited_once()
         view = submit.response.send_message.await_args.kwargs["view"]
         assert isinstance(view, ColorPickView)
-        assert len(view.children) == len(SECRET_COLORS)
+        assert len(view.color_select.options) == len(SECRET_COLORS)
     finally:
         client.close()
 
@@ -786,15 +786,16 @@ def test_color_pick_posts_with_color():
         from cogs.confess import ColorPickView
         submit = make_interaction(member, channel_id=555)
         view = ColorPickView(cog, submit, 1, code, "hi")
+        view.color_select = MagicMock()
+        view.color_select.values = ["12345"]
         pick = make_interaction(member, channel_id=555)
-        button = view.children[0]
-        asyncio.run(button.callback(pick, button))
+        asyncio.run(view.on_color(pick))
         channel = pick.guild.get_channel(555)
         channel.send.assert_awaited_once()
         embed = channel.send.await_args.kwargs["embed"]
         assert "hi" in embed.description
         doc = db["anon_codes"].find_one({"user_id": 100})
-        assert doc["color"] is not None
+        assert doc["color"] == 12345
     finally:
         client.close()
 
@@ -819,12 +820,13 @@ def test_reply_new_code_modal_then_color_then_reply_modal():
         submit.response.send_message.assert_awaited_once()
         view = submit.response.send_message.await_args.kwargs["view"]
         assert isinstance(view, ReplyColorPickView)
-        assert len(view.children) == len(SECRET_COLORS)
-        # click a color button -> should open reply modal
+        assert len(view.color_select.options) == len(SECRET_COLORS)
+        # pick a color -> should open reply modal
         color_submit = make_interaction(member, channel_id=555)
         color_submit.response.send_modal = AsyncMock()
-        btn = view.children[0]
-        asyncio.run(btn.callback(color_submit, btn))
+        view.color_select = MagicMock()
+        view.color_select.values = ["12345"]
+        asyncio.run(view.on_color(color_submit))
         color_submit.response.send_modal.assert_awaited_once()
     finally:
         client.close()
