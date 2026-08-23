@@ -791,7 +791,7 @@ class SummonsCog(commands.Cog):
         )
 
     async def _cleanup_pings(self, msgs):
-        await asyncio.sleep(10)
+        await asyncio.sleep(60)
         for m in msgs:
             try:
                 await m.delete()
