@@ -797,3 +797,34 @@ def test_color_pick_posts_with_color():
         assert doc["color"] is not None
     finally:
         client.close()
+
+
+@skip
+def test_reply_new_code_modal_then_color_then_reply_modal():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        from cogs.confess import ReplyNewCodeModal, ReplyColorPickView, SECRET_COLORS
+        member = make_member(uid=100)
+        # simulate on_select creating the code first, then nickname modal
+        code = cog._new_code(1, 100)
+        modal = ReplyNewCodeModal(cog, 1, 555, "ORIGINAL", code, "RandomNick", MagicMock())
+        modal.nick_input = MagicMock()
+        modal.nick_input.value = "CoolNick"
+        submit = make_interaction(member, channel_id=555)
+        submit.response.send_message = AsyncMock()
+        asyncio.run(modal.on_submit(submit))
+        assert db["anon_codes"].count_documents({"user_id": 100}) == 1
+        assert db["anon_codes"].find_one({"code": code})["nickname"] == "CoolNick"
+        submit.response.send_message.assert_awaited_once()
+        view = submit.response.send_message.await_args.kwargs["view"]
+        assert isinstance(view, ReplyColorPickView)
+        assert len(view.children) == len(SECRET_COLORS)
+        # click a color button -> should open reply modal
+        color_submit = make_interaction(member, channel_id=555)
+        color_submit.response.send_modal = AsyncMock()
+        btn = view.children[0]
+        asyncio.run(btn.callback(color_submit, btn))
+        color_submit.response.send_modal.assert_awaited_once()
+    finally:
+        client.close()
