@@ -23,8 +23,7 @@ C = _db["anon_codes"]
 P = _db["easyjoin_panels"]
 M = _db["secret_messages"]
 I = _db["inbox"]
-M = _db["secret_messages"]
-I = _db["inbox"]
+RP = _db["reveal_proposals"]
 
 PREFIX_CACHE = {}
 
@@ -144,6 +143,27 @@ def is_dev(guild_id, user_id):
 
 def is_owner_or_dev(guild_id, user_id):
     return is_owner(user_id) or is_dev(guild_id, user_id)
+
+
+def get_mod_ids(guild_id):
+    return get_guild_settings(guild_id).get("mod_ids", [])
+
+
+def is_mod(guild_id, user_id):
+    return user_id in get_mod_ids(guild_id)
+
+
+def is_staff(member):
+    """Admins, devs, mods or the bot owner."""
+    if is_owner(member.id):
+        return True
+    if is_admin(member):
+        return True
+    try:
+        guild_id = member.guild.id
+    except Exception:
+        return False
+    return is_dev(guild_id, member.id) or is_mod(guild_id, member.id)
 
 
 def is_privileged(member):

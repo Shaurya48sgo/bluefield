@@ -63,7 +63,10 @@ async def setup_hook():
     await bot.load_extension("cogs.confess")
     for panel in P.find():
         try:
-            bot.add_view(EasyJoinView(bot.cogs["SummonsCog"], panel["summon_id"]), message_id=panel["message_id"])
+            bot.add_view(
+                EasyJoinView(bot.cogs["SummonsCog"], panel["guild_id"], panel["summon_id"]),
+                message_id=panel["message_id"],
+            )
         except Exception:
             pass
     for sm in M.find():

@@ -9,11 +9,15 @@ from cogs.common import (
     G,
     I,
     M,
+    RP,
     audit,
     generate_code,
     get_guild_settings,
     has_admin_or_dev,
+    is_admin,
     is_blacklisted,
+    is_dev,
+    is_mod,
     is_owner,
     set_guild_settings,
 )
@@ -350,6 +354,169 @@ class ReplyComposeModal(discord.ui.Modal):
         )
 
 
+REVEAL_EXPIRY = 24 * 3600
+
+
+class RevealDecisionView(discord.ui.View):
+    def __init__(self, cog, proposal_id, to_user_id):
+        super().__init__(timeout=24 * 3600)
+        self.cog = cog
+        self.proposal_id = proposal_id
+        self.to_user_id = to_user_id
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.to_user_id:
+            await interaction.response.send_message("This reveal request isn't for you.", ephemeral=True)
+            return False
+        return True
+
+    def _expired(self, prop):
+        created = prop.get("created_at")
+        if created is None:
+            return True
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) - created > timedelta(seconds=REVEAL_EXPIRY)
+
+    async def _reveal_identity(self, user, their_code, other_user, other_code, deleted):
+        embed = discord.Embed(
+            title="🤝 Mutual reveal accepted!",
+            color=discord.Colour(0x57F287),
+            description=(
+                f"Your code **`{their_code}`** and **`{other_code}`** have revealed each other.\n\n"
+                f"The person behind `{other_code}` is {other_user.mention} "
+                f"(**{other_user.name}**)"
+                + ("\n\n🗑️ Both codes have been deleted." if deleted else "")
+            ),
+        )
+        try:
+            await user.send(embed=embed)
+            return True
+        except Exception:
+            return False
+
+    @discord.ui.button(label="✅ Accept", style=discord.ButtonStyle.success)
+    async def accept(self, interaction, button):
+        prop = RP.find_one({"_id": self.proposal_id})
+        if not prop or prop.get("status") != "pending":
+            await interaction.response.edit_message(
+                embed=discord.Embed(
+                    title="Reveal request",
+                    description="This request is no longer active.",
+                    color=discord.Colour(0x99AAB5),
+                ),
+                view=None,
+            )
+            return
+        if self._expired(prop):
+            RP.update_one({"_id": prop["_id"]}, {"$set": {"status": "expired"}})
+            await interaction.response.edit_message(
+                embed=discord.Embed(
+                    title="⌛ Reveal request expired",
+                    color=discord.Colour(0x99AAB5),
+                ),
+                view=None,
+            )
+            return
+        from_code_doc = C.find_one({"code": prop["from_code"]})
+        to_code_doc = C.find_one({"code": prop["to_code"]})
+        if not from_code_doc or not to_code_doc:
+            RP.update_one({"_id": prop["_id"]}, {"$set": {"status": "invalid"}})
+            await interaction.response.send_message("One of the codes no longer exists.", ephemeral=True)
+            return
+        RP.update_one({"_id": prop["_id"]}, {"$set": {"status": "accepted", "accepted_at": datetime.now(timezone.utc)}})
+        deleted = bool(prop.get("delete"))
+        if deleted:
+            C.delete_many({"code": {"$in": [prop["from_code"], prop["to_code"]]}})
+        from_user = self.cog.bot.get_user(prop["from_user_id"])
+        to_user = interaction.user
+        delivered = False
+        if from_user:
+            delivered = await self._reveal_identity(
+                from_user, prop["from_code"], to_user, prop["to_code"], deleted
+            )
+        await self._reveal_identity(to_user, prop["to_code"], from_user, prop["from_code"], deleted)
+        audit(interaction.guild.id if interaction.guild else 0, to_user.id, "reveal_accept", "code", prop["to_code"], f"with {prop['from_code']}")
+        note = "" if delivered else "\n\n⚠️ Couldn't DM the other user — they may have DMs closed."
+        await interaction.response.edit_message(
+            embed=discord.Embed(
+                title="🤝 Revealed!",
+                description=f"You are now revealed with **`{prop['from_code']}`**.{note}",
+                color=discord.Colour(0x57F287),
+            ),
+            view=None,
+        )
+
+    @discord.ui.button(label="❌ Decline", style=discord.ButtonStyle.danger)
+    async def decline(self, interaction, button):
+        prop = RP.find_one({"_id": self.proposal_id})
+        if not prop or prop.get("status") != "pending":
+            await interaction.response.edit_message(
+                embed=discord.Embed(
+                    title="Reveal request",
+                    description="This request is no longer active.",
+                    color=discord.Colour(0x99AAB5),
+                ),
+                view=None,
+            )
+            return
+        RP.update_one({"_id": prop["_id"]}, {"$set": {"status": "declined"}})
+        from_user = self.cog.bot.get_user(prop["from_user_id"])
+        if from_user:
+            try:
+                await from_user.send(
+                    embed=discord.Embed(
+                        title="Reveal declined",
+                        description=f"**`{prop['to_code']}`** declined your mutual reveal request.",
+                        color=discord.Colour(0xED4245),
+                    )
+                )
+            except Exception:
+                pass
+        audit(interaction.guild.id if interaction.guild else 0, interaction.user.id, "reveal_decline", "code", prop["to_code"])
+        await interaction.response.edit_message(
+            embed=discord.Embed(title="Reveal declined.", color=discord.Colour(0xED4245)),
+            view=None,
+        )
+
+
+class ReportActionView(discord.ui.View):
+    def __init__(self, cog, code):
+        super().__init__(timeout=7 * 24 * 3600)
+        self.cog = cog
+        self.code = code
+
+    async def interaction_check(self, interaction):
+        member = interaction.user
+        allowed = (
+            is_owner(member.id)
+            or (interaction.guild and is_dev(interaction.guild.id, member.id))
+            or (interaction.guild and is_mod(interaction.guild.id, member.id))
+            or is_admin(member)
+        )
+        if not allowed:
+            await interaction.response.send_message("Only staff can use this.", ephemeral=True)
+        return allowed
+
+    @discord.ui.button(label="⛔ Suspend 1h", style=discord.ButtonStyle.primary)
+    async def suspend_1h(self, interaction, button):
+        await self.cog._suspend_from_report(interaction, self.code, "1h")
+
+    @discord.ui.button(label="⛔ Suspend 24h", style=discord.ButtonStyle.primary)
+    async def suspend_24h(self, interaction, button):
+        await self.cog._suspend_from_report(interaction, self.code, "24h")
+
+    @discord.ui.button(label="✅ Dismiss", style=discord.ButtonStyle.secondary)
+    async def dismiss(self, interaction, button):
+        embed = discord.Embed(
+            title=f"🚩 Report · `{self.code}` · dismissed",
+            color=discord.Colour(0x99AAB5),
+            description=f"Dismissed by {interaction.user.mention}.",
+        )
+        await interaction.response.edit_message(embed=embed, view=None)
+        audit(interaction.guild.id, interaction.user.id, "report_dismiss", "code", self.code)
+
+
 class HacksSearchModal(discord.ui.Modal):
     def __init__(self, cog):
         super().__init__(title="Hacks search")
@@ -389,6 +556,7 @@ class HacksSearchView(discord.ui.View):
 class ConfessCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.last_report = {}
 
     def _max_codes(self, guild_id):
         return get_guild_settings(guild_id).get("confess_max_codes", DEFAULT_MAX_CODES)
@@ -737,7 +905,214 @@ class ConfessCog(commands.Cog):
         audit(interaction.guild.id, interaction.user.id, "code_rename", "code", code)
         await reply(f"✅ Code **`{code}`** nickname changed to **{name}**.")
 
+    # ---------- slash: /secret reveal ----------
+
+    async def reveal_target_autocomplete(self, interaction, current):
+        docs = C.find({"user_id": {"$ne": interaction.user.id}}).sort("created_at", -1)
+        out = []
+        for d in docs:
+            label = f"{d.get('nickname', '?')} - {d['code']}"
+            if current.lower() in label.lower() or current.lower() in d["code"].lower():
+                out.append(app_commands.Choice(name=label, value=d["code"]))
+            if len(out) >= 25:
+                break
+        return out
+
+    reveal_group = app_commands.Group(name="reveal", description="Mutually reveal identities with another code")
+    secret.add_command(reveal_group)
+
+    @reveal_group.command(name="propose")
+    @app_commands.describe(
+        to_code="The code you want to mutually reveal with",
+        your_code="One of your codes to reveal",
+        also_delete="Also delete both codes after revealing (anti-blackmail)",
+    )
+    @app_commands.autocomplete(to_code=reveal_target_autocomplete, your_code=delete_autocomplete)
+    async def reveal_propose(self, interaction, to_code: str, your_code: str, also_delete: bool = False):
+        """Propose a mutual identity reveal with another anonymous code."""
+        async def reply(text):
+            await interaction.response.send_message(text, ephemeral=True)
+
+        to_code = to_code.strip().upper()
+        your_code = your_code.strip().upper()
+        if to_code == your_code:
+            await reply("You can't reveal with your own code.")
+            return
+        mine = C.find_one({"code": your_code, "user_id": interaction.user.id})
+        if not mine:
+            await reply("That's not one of your codes.")
+            return
+        if self._is_suspended(mine):
+            await reply("⛔ Your code is suspended.")
+            return
+        target = C.find_one({"code": to_code})
+        if not target:
+            await reply(f"No such code **`{to_code}`**.")
+            return
+        if target.get("user_id") == interaction.user.id:
+            await reply("That's one of your own codes.")
+            return
+        if self._is_suspended(target):
+            await reply("⛔ That code is suspended.")
+            return
+        if RP.find_one({"from_code": your_code, "to_code": to_code, "status": "pending"}):
+            await reply("You already have a pending reveal request with this code.")
+            return
+        prop = RP.insert_one(
+            {
+                "guild_id": interaction.guild.id,
+                "from_user_id": interaction.user.id,
+                "from_code": your_code,
+                "to_code": to_code,
+                "delete": bool(also_delete),
+                "status": "pending",
+                "created_at": datetime.now(timezone.utc),
+            }
+        )
+        target_user = self.bot.get_user(target.get("user_id"))
+        if target_user is None:
+            try:
+                target_user = await self.bot.fetch_user(target.get("user_id"))
+            except Exception:
+                target_user = None
+        if target_user is None:
+            RP.delete_one({"_id": prop.inserted_id})
+            await reply("Couldn't reach that user.")
+            return
+        delete_note = (
+            "🗑️ If you accept, **both codes will be deleted** after revealing."
+            if also_delete
+            else "Nothing gets deleted — only identities are exchanged."
+        )
+        embed = discord.Embed(
+            title="🤝 Mutual reveal request",
+            color=discord.Colour(0x5865F2),
+            description=(
+                f"**`{your_code}`** wants to mutually reveal identities with your code **`{to_code}`**.\n\n"
+                f"{delete_note}\n\n"
+                "If you accept, both of you will get a DM showing who is behind each code."
+            ),
+        )
+        try:
+            await target_user.send(
+                embed=embed,
+                view=RevealDecisionView(self, prop.inserted_id, target.get("user_id")),
+            )
+        except Exception:
+            RP.delete_one({"_id": prop.inserted_id})
+            await reply("That user has DMs closed — couldn't send them the request.")
+            return
+        audit(interaction.guild.id, interaction.user.id, "reveal_propose", "code", your_code, f"to {to_code}")
+        await reply(f"🤝 Reveal request sent to the owner of **`{to_code}`**. They have 24 hours to accept.")
+
+    # ---------- slash: /secret report ----------
+
+    REPORT_COOLDOWN = 60
+
+    @secret.command(name="report")
+    @app_commands.describe(code="The code you want to report", reason="Why are you reporting this?")
+    @app_commands.autocomplete(code=reveal_target_autocomplete)
+    async def report(self, interaction, code: str, reason: str):
+        """Report an anonymous code to the staff. Anyone can use this."""
+        async def reply(text):
+            await interaction.response.send_message(text, ephemeral=True)
+
+        gid = interaction.guild.id
+        now = datetime.now(timezone.utc).timestamp()
+        last = self.last_report.get(interaction.user.id)
+        if last is not None and now - last < self.REPORT_COOLDOWN:
+            await reply(f"⏳ Please wait {int(self.REPORT_COOLDOWN - (now - last))}s before reporting again.")
+            return
+        code = code.strip().upper()
+        doc = C.find_one({"code": code})
+        if not doc:
+            await reply(f"No such code **`{code}`**.")
+            return
+        reason = reason.strip()
+        if len(reason) < 5:
+            await reply("Please describe the reason (at least 5 characters).")
+            return
+        if len(reason) > 500:
+            await reply("Reason must be 500 characters or less.")
+            return
+        cid = get_guild_settings(gid).get("report_log_channel_id")
+        channel = interaction.guild.get_channel(cid) if cid else None
+        if channel is None:
+            await reply("Reports aren't set up here yet — ask an admin to run `I?reports` in the reports channel.")
+            return
+        embed = discord.Embed(
+            title=f"🚩 Report · `{code}`",
+            color=discord.Colour(0xED4245),
+            description=reason,
+        )
+        embed.add_field(name="Nickname", value=doc.get("nickname", "?"), inline=True)
+        embed.add_field(
+            name="Reporter",
+            value=f"{interaction.user.mention} (`{interaction.user.id}`)",
+            inline=True,
+        )
+        embed.set_footer(text=f"Submitted · {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
+        try:
+            await channel.send(embed=embed, view=ReportActionView(self, code))
+        except Exception:
+            await reply("Couldn't submit the report — the reports channel may be missing.")
+            return
+        self.last_report[interaction.user.id] = now
+        audit(gid, interaction.user.id, "report_submit", "code", code)
+        await reply(f"✅ Report on **`{code}`** submitted to the staff. Thanks for helping keep chat safe.")
+
+    async def _suspend_from_report(self, interaction, code, duration):
+        seconds = self._parse_duration(duration)
+        if seconds is None:
+            return
+        doc = C.find_one({"code": code})
+        until = datetime.now(timezone.utc) + timedelta(seconds=seconds)
+        C.update_one(
+            {"_id": doc["_id"]} if doc else {"code": code},
+            {
+                "$set": {"suspended_until": until},
+                "$push": {
+                    "suspend_history": {
+                        "action": "suspend",
+                        "by": interaction.user.id,
+                        "until": until,
+                        "at": datetime.now(timezone.utc),
+                        "source": "report",
+                    }
+                },
+            },
+        )
+        audit(interaction.guild.id, interaction.user.id, "code_suspend", "code", code, "from report")
+        embed = discord.Embed(
+            title="⛔ Code suspended (report)",
+            color=discord.Colour(0xED4245),
+            description=(
+                f"**Code:** `{code}`\n"
+                f"**Moderator:** {interaction.user.mention}\n"
+                f"**Duration:** {duration}"
+            ),
+        )
+        await self.send_mod_log(interaction.guild, embed)
+        done = discord.Embed(
+            title=f"🚩 Report · `{code}` · handled",
+            color=discord.Colour(0x57F287),
+            description=f"Suspended for **{duration}** by {interaction.user.mention}.",
+        )
+        await interaction.response.edit_message(embed=done, view=None)
+
     # ---------- prefix: suspend / unsuspend ----------
+
+    async def send_mod_log(self, guild, embed):
+        cid = get_guild_settings(guild.id).get("mod_log_channel_id")
+        if not cid:
+            return
+        channel = guild.get_channel(cid)
+        if not channel:
+            return
+        try:
+            await channel.send(embed=embed)
+        except Exception:
+            pass
 
     def _parse_duration(self, value):
         value = value.strip().lower()
@@ -765,9 +1140,16 @@ class ConfessCog(commands.Cog):
         return datetime.now(timezone.utc) < until
 
     @commands.command(name="suspend")
-    @has_admin_or_dev()
     async def suspend(self, ctx, code: str, duration: str = None):
-        """Suspend a secret code for a duration (e.g. 30m, 2h, 1w)."""
+        """Suspend a secret code for a duration (e.g. 30m, 2h, 1w). Staff/mods only."""
+        if not (
+            is_owner(ctx.author.id)
+            or is_dev(ctx.guild.id, ctx.author.id)
+            or is_mod(ctx.guild.id, ctx.author.id)
+            or is_admin(ctx.author)
+        ):
+            await ctx.send("Only admins, devs or mods can suspend codes.")
+            return
         code = code.strip().upper()
         doc = C.find_one({"code": code})
         if not doc:
@@ -778,23 +1160,69 @@ class ConfessCog(commands.Cog):
             await ctx.send("Invalid duration. Use e.g. `30m`, `2h`, `1w`.")
             return
         until = datetime.now(timezone.utc) + timedelta(seconds=seconds)
-        C.update_one({"_id": doc["_id"]}, {"$set": {"suspended_until": until}})
+        C.update_one(
+            {"_id": doc["_id"]},
+            {
+                "$set": {"suspended_until": until},
+                "$push": {
+                    "suspend_history": {
+                        "action": "suspend",
+                        "by": ctx.author.id,
+                        "until": until,
+                        "at": datetime.now(timezone.utc),
+                    }
+                },
+            },
+        )
         audit(ctx.guild.id, ctx.author.id, "code_suspend", "code", code)
+        embed = discord.Embed(
+            title="⛔ Code suspended",
+            color=discord.Colour(0xED4245),
+            description=(
+                f"**Code:** `{code}` ({doc.get('nickname', '?')})\n"
+                f"**Moderator:** {ctx.author.mention}\n"
+                f"**Duration:** {duration} (until <t:{int(until.timestamp())}:f>)"
+            ),
+        )
+        await self.send_mod_log(ctx.guild, embed)
         await ctx.send(f"⛔ Suspended code **`{code}`** ({doc.get('nickname')}) for **{duration}**.")
 
     @commands.command(name="unsuspend")
-    @has_admin_or_dev()
     async def unsuspend(self, ctx, code: str):
-        """Remove a suspension from a secret code."""
+        """Remove a suspension from a secret code. Staff/mods only."""
+        if not (
+            is_owner(ctx.author.id)
+            or is_dev(ctx.guild.id, ctx.author.id)
+            or is_mod(ctx.guild.id, ctx.author.id)
+            or is_admin(ctx.author)
+        ):
+            await ctx.send("Only admins, devs or mods can unsuspend codes.")
+            return
         code = code.strip().upper()
         res = C.update_one(
             {"code": code},
-            {"$unset": {"suspended_until": ""}},
+            {
+                "$unset": {"suspended_until": ""},
+                "$push": {
+                    "suspend_history": {
+                        "action": "unsuspend",
+                        "by": ctx.author.id,
+                        "until": None,
+                        "at": datetime.now(timezone.utc),
+                    }
+                },
+            },
         )
         if res.matched_count == 0:
             await ctx.send("No such code in this server.")
             return
         audit(ctx.guild.id, ctx.author.id, "code_unsuspend", "code", code)
+        embed = discord.Embed(
+            title="✅ Code unsuspended",
+            color=discord.Colour(0x57F287),
+            description=f"**Code:** `{code}`\n**Moderator:** {ctx.author.mention}",
+        )
+        await self.send_mod_log(ctx.guild, embed)
         await ctx.send(f"✅ Unsuspended code **`{code}`**.")
 
     # ---------- prefix: dev-only hacks (private DM only, silent otherwise) ----------
@@ -833,6 +1261,10 @@ class ConfessCog(commands.Cog):
         if not query:
             await ctx.send("Usage: `I?hackssearch <userID | code | nickname>`")
             return
+        if query.strip().isdigit():
+            uid = int(query.strip())
+            await ctx.send(embed=self._hacks_profile_embed(uid), view=HacksSearchView(self, ctx.author))
+            return
         docs = self._hacks_search(query)
         if not docs:
             await ctx.send(f"No codes found for `{query}`.")
@@ -868,6 +1300,57 @@ class ConfessCog(commands.Cog):
                 value=f"Owner: {self._owner_name(d.get('user_id'))}\nStatus: {status}\nCreated: {d.get('created_at')}",
                 inline=False,
             )
+        return embed
+
+    def _hacks_profile_embed(self, user_id):
+        codes = list(C.find({"user_id": user_id}).sort("created_at", 1))
+        total_posts = M.count_documents({"owner_id": user_id})
+        posts = list(M.find({"owner_id": user_id}).sort("created_at", -1).limit(5))
+        embed = discord.Embed(
+            title=f"👤 Hacks profile · <@{user_id}>",
+            description=(
+                f"**User ID:** `{user_id}`\n"
+                f"**Codes:** {len(codes)} · **Secret posts/replies:** {total_posts}"
+            ),
+            color=discord.Colour(0x9B59B6),
+        )
+        for d in codes[:15]:
+            if self._is_suspended(d):
+                until = d.get("suspended_until")
+                status = f"⛔ suspended until {until:%Y-%m-%d %H:%M UTC}" if until else "⛔ suspended"
+            else:
+                status = "✅ active"
+            history = d.get("suspend_history", [])
+            hist_note = f" · {len(history)} suspension event(s)" if history else ""
+            created = d.get("created_at")
+            created_note = created.strftime("%Y-%m-%d") if created else "?"
+            embed.add_field(
+                name=f"`{d['code']}` · {d.get('nickname', '?')}",
+                value=f"{status} · created {created_note}{hist_note}",
+                inline=False,
+            )
+            for h in history[-3:]:
+                at = h.get("at")
+                at_note = at.strftime("%Y-%m-%d %H:%M") if at else "?"
+                until_h = h.get("until")
+                until_note = until_h.strftime("%Y-%m-%d %H:%M") if until_h else "-"
+                embed.add_field(
+                    name="↳ suspension",
+                    value=(
+                        f"{h.get('action', '?')} by <@{h.get('by', '?')}> "
+                        f"at {at_note} UTC (until {until_note})"
+                    ),
+                    inline=False,
+                )
+        if not codes:
+            embed.add_field(name="Codes", value="None found.", inline=False)
+        if posts:
+            lines = []
+            for p in posts:
+                link = _jump_link(p.get("guild_id"), p.get("channel_id"), p.get("message_id"))
+                pn = p.get("post_number", "?")
+                lines.append(f"[Post #{pn}]({link})")
+            embed.add_field(name="Recent posts", value="\n".join(lines), inline=False)
         return embed
 
     @commands.command(name="hackslist")

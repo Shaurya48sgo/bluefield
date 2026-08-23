@@ -13,6 +13,7 @@ from cogs.common import (
     get_guild_prefix_sync,
     get_guild_settings,
     get_dev_ids,
+    get_mod_ids,
     has_admin_or_dev,
     is_owner,
     set_guild_prefix,
@@ -69,7 +70,7 @@ class HelpView(discord.ui.View):
                 "title": "📦 Manage a summon",
                 "fields": [
                     ("/create summon <name> <canping> <canjoin>", "Create a virtual summon (max 3 for members)."),
-                    ("/group easyjoin <summon>", "Post Join/Leave buttons for an open-join summon (reaction-role style)."),
+                    ("/easyjoin <summon>", "Post Join/Leave/Members buttons for an open-join summon (reaction-role style)."),
                     ("/edit summon <summon>", "Open the edit panel (join/ping selectors + rename + add pingers/inviters)."),
                     ("/delete summon <summon>", "Delete a summon."),
                     ("/join <summon> / /leave <summon>", "Join or leave a summon."),
@@ -99,6 +100,12 @@ class HelpView(discord.ui.View):
                     (f"{self.prefix}purge", "Clean up stale summon entries."),
                     (f"{self.prefix}prefix_now <new prefix>", "Change the bot's prefix (owner only)."),
                     (f"{self.prefix}colors", "DM the owner every usable embed colour, numbered and shown in its own colour (owner only)."),
+                    (f"{self.prefix}mod <@user> -y|-r", "Add/remove a secret-chat mod. Mods can suspend/unsuspend codes."),
+                    (f"{self.prefix}mods", "List this server's mods."),
+                    (f"{self.prefix}modlog", "Run IN a channel to make it the mod-log channel."),
+                    (f"{self.prefix}reports", "Run IN a channel to make it the code-reports channel."),
+                    (f"{self.prefix}suspend <code> <duration>", "Suspend a code, e.g. `30m`, `2h`, `1w` (admins/devs/mods)."),
+                    (f"{self.prefix}unsuspend <code>", "Remove a suspension (admins/devs/mods)."),
                 ],
             },
             {
@@ -106,6 +113,8 @@ class HelpView(discord.ui.View):
                 "fields": [
                     ("/secret say <message> [code]", "Post an anonymous message. Codes have a Reply button; replies land in your /inbox."),
                     ("/secret code delete <code>", "Delete one of your codes (pick from the list) to free a slot. New codes are generated via `/secret say` or the Reply button."),
+                    ("/secret reveal propose <to_code> <your_code> [also_delete]", "Propose mutually revealing identities. If they accept, both of you get DMs showing who's who — optionally deleting both codes (anti-blackmail)."),
+                    ("/secret report <code> <reason>", "Report a code to the staff. Anyone can use it; reports go to the reports channel."),
                     ("/inbox", "DM-only: see where your codes were mentioned (jump links) + Clear inbox / Clear chat buttons."),
                 ],
             },
@@ -198,6 +207,88 @@ class CoreCog(commands.Cog):
             await ctx.author.send(embeds=embeds[i : i + 10])
         audit(ctx.guild.id, ctx.author.id, "colors", "guild", ctx.guild.id)
         await ctx.send(f"📩 DM'd you **{len(embeds)}** embed colours.")
+
+    async def send_mod_log(self, guild, embed):
+        cid = get_guild_settings(guild.id).get("mod_log_channel_id")
+        if not cid:
+            return
+        channel = guild.get_channel(cid)
+        if not channel:
+            return
+        try:
+            await channel.send(embed=embed)
+        except Exception:
+            pass
+
+    @commands.command(name="mod")
+    @has_admin_or_dev()
+    async def mod(self, ctx, user: discord.Member = None, flag: str = None):
+        """Add (-y) or remove (-r) a secret-chat mod (admins/devs/owner only)."""
+        if user is None:
+            mods = get_mod_ids(ctx.guild.id)
+            await ctx.send(
+                "Mods: " + (" ".join(f"<@{m}>" for m in mods) if mods else "none")
+                + "\nUsage: `I?mod <user> -y|-r`"
+            )
+            return
+        mods = list(get_mod_ids(ctx.guild.id))
+        flag = (flag or "").lower()
+        if flag == "-y":
+            if user.id in mods:
+                await ctx.send(f"{user.mention} is already a mod.")
+                return
+            mods.append(user.id)
+            set_guild_settings(ctx.guild.id, mod_ids=mods)
+            audit(ctx.guild.id, ctx.author.id, "mod_add", "user", user.id)
+            embed = discord.Embed(
+                title="🛡️ Mod added",
+                color=discord.Colour(0x5865F2),
+                description=f"**Mod:** {user.mention}\n**Added by:** {ctx.author.mention}",
+            )
+            await self.send_mod_log(ctx.guild, embed)
+            await ctx.send(f"✅ {user.mention} is now a mod (can suspend/unsuspend codes).")
+        elif flag == "-r":
+            if user.id not in mods:
+                await ctx.send(f"{user.mention} is not a mod.")
+                return
+            mods.remove(user.id)
+            set_guild_settings(ctx.guild.id, mod_ids=mods)
+            audit(ctx.guild.id, ctx.author.id, "mod_remove", "user", user.id)
+            embed = discord.Embed(
+                title="🛡️ Mod removed",
+                color=discord.Colour(0x5865F2),
+                description=f"**Mod:** {user.mention}\n**Removed by:** {ctx.author.mention}",
+            )
+            await self.send_mod_log(ctx.guild, embed)
+            await ctx.send(f"✅ {user.mention} is no longer a mod.")
+        else:
+            await ctx.send("Usage: `I?mod <user> -y|-r` (-y add, -r remove)")
+
+    @commands.command(name="mods")
+    @has_admin_or_dev()
+    async def mods(self, ctx):
+        """List the mods of this server."""
+        mods = get_mod_ids(ctx.guild.id)
+        if not mods:
+            await ctx.send("No mods set. Use `I?mod <user> -y` to add one.")
+            return
+        await ctx.send("🛡️ Mods: " + " ".join(f"<@{m}>" for m in mods))
+
+    @commands.command(name="modlog")
+    @has_admin_or_dev()
+    async def modlog(self, ctx):
+        """Make the current channel the mod-log channel."""
+        set_guild_settings(ctx.guild.id, mod_log_channel_id=ctx.channel.id)
+        audit(ctx.guild.id, ctx.author.id, "settings", "guild", ctx.guild.id, f"mod log channel -> #{ctx.channel.name}")
+        await ctx.send(f"✅ Mod-log channel set to {ctx.channel.mention}.")
+
+    @commands.command(name="reports")
+    @has_admin_or_dev()
+    async def reports(self, ctx):
+        """Make the current channel the code-reports channel."""
+        set_guild_settings(ctx.guild.id, report_log_channel_id=ctx.channel.id)
+        audit(ctx.guild.id, ctx.author.id, "settings", "guild", ctx.guild.id, f"reports channel -> #{ctx.channel.name}")
+        await ctx.send(f"✅ Code reports will be submitted to {ctx.channel.mention}.")
 
     @commands.command(name="activitychannel")
     @has_admin_or_dev()

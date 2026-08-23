@@ -981,3 +981,50 @@ def test_close_easyjoin_panels_on_canjoin_change():
         fetched.edit.assert_awaited_once()
     finally:
         client.close()
+
+
+@skip
+def test_easyjoin_members_button_shows_ephemeral_list():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        from cogs.summons import EasyJoinView
+
+        doc = make_summon(name="PanelGroup", members=[42, 43])
+        res = db["summon_roles"].insert_one(doc)
+        guild = make_guild()
+        m1 = MagicMock()
+        m1.mention = "<@42>"
+        m2 = MagicMock()
+        m2.mention = "<@43>"
+        guild.get_member.side_effect = lambda uid: {42: m1, 43: m2}.get(uid)
+
+        class FakeMessage:
+            id = 12345
+
+        interaction = make_interaction(make_member(uid=7), guild=guild)
+        interaction.message = FakeMessage()
+        view = EasyJoinView(cog, 1, str(res.inserted_id))
+        asyncio.run(view.members_button.callback(interaction))
+        kwargs = interaction.response.send_message.await_args.kwargs
+        assert kwargs.get("ephemeral") is True
+        embed = kwargs["embed"]
+        assert "PanelGroup" in embed.title
+        assert "<@42>" in embed.description and "<@43>" in embed.description
+        assert embed.footer.text == "2 members"
+    finally:
+        client.close()
+
+
+@skip
+def test_easyjoin_view_has_join_leave_members_close():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        from cogs.summons import EasyJoinView
+
+        view = EasyJoinView(cog, 1, "x" * 24)
+        custom_ids = [c.custom_id for c in view.children]
+        assert custom_ids == ["easyjoin_join", "easyjoin_leave", "easyjoin_members", "easyjoin_expire"]
+    finally:
+        client.close()

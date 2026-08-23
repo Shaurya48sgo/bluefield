@@ -61,9 +61,10 @@ class MembersButton(discord.ui.View):
 
 
 class EasyJoinView(discord.ui.View):
-    def __init__(self, cog, summon_id):
+    def __init__(self, cog, guild_id, summon_id):
         super().__init__(timeout=None)
         self.cog = cog
+        self.guild_id = guild_id
         self.summon_id = str(summon_id)
 
     @discord.ui.button(label="✅ Join", style=discord.ButtonStyle.success, custom_id="easyjoin_join")
@@ -74,7 +75,27 @@ class EasyJoinView(discord.ui.View):
     async def leave_button(self, interaction, button):
         await self.cog.easyjoin_toggle(interaction, self.summon_id, join=False)
 
-    @discord.ui.button(label="⏹️ Expire", style=discord.ButtonStyle.secondary, custom_id="easyjoin_expire")
+    @discord.ui.button(label="👥 Members", style=discord.ButtonStyle.secondary, custom_id="easyjoin_members")
+    async def members_button(self, interaction, button):
+        doc = S.find_one({"_id": ObjectId(self.summon_id), "guild_id": interaction.guild.id})
+        if not doc:
+            await interaction.response.send_message("This summon no longer exists.")
+            return
+        guild = interaction.guild
+        embed = discord.Embed(
+            title=f"👥 Members of **{doc['name']}**",
+            color=discord.Colour(doc.get("color", 0)),
+        )
+        member_ids = doc.get("members", [])
+        names = []
+        for uid in member_ids:
+            m = guild.get_member(uid)
+            names.append(m.mention if m else _mention(uid))
+        embed.description = (" ".join(names)) if names else "No members yet."
+        embed.set_footer(text=f"{len(member_ids)} members")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @discord.ui.button(label="🔒 Close", style=discord.ButtonStyle.secondary, custom_id="easyjoin_expire")
     async def expire_button(self, interaction, button):
         await self.cog.easyjoin_expire(interaction, self.summon_id)
 
@@ -523,15 +544,13 @@ class SummonsCog(commands.Cog):
                 break
         return out
 
-    # ---------- slash: group easyjoin ----------
+    # ---------- slash: easyjoin ----------
 
-    group = app_commands.Group(name="group", description="Group tools")
-
-    @group.command(name="easyjoin")
+    @app_commands.command(name="easyjoin")
     @app_commands.describe(summon="The open-join summon to create buttons for")
     @app_commands.autocomplete(summon=easyjoin_autocomplete)
     async def easyjoin(self, interaction, summon: str):
-        """Post a Join/Leave button panel for an open-join summon."""
+        """Post a Join/Leave/Members button panel for an open-join summon."""
         doc = self._resolve(interaction.guild.id, summon)
         if not doc:
             await interaction.response.send_message("That summon doesn't exist.")
@@ -544,7 +563,7 @@ class SummonsCog(commands.Cog):
         if not doc.get("enabled", True):
             await interaction.response.send_message("That summon is disabled.")
             return
-        view = EasyJoinView(self, str(doc["_id"]))
+        view = EasyJoinView(self, interaction.guild.id, str(doc["_id"]))
         msg = await interaction.response.send_message(
             embed=self._easyjoin_embed(interaction.guild, doc),
             view=view,
@@ -565,7 +584,10 @@ class SummonsCog(commands.Cog):
         member_count = len([uid for uid in doc.get("members", []) if guild.get_member(uid)])
         embed = discord.Embed(
             title=f"🎮 {doc['name']}",
-            description=f"👥 **{member_count}** members\nClick **Join** to join or **Leave** to leave.",
+            description=(
+                f"👥 **{member_count}** members\n"
+                "Click **✅ Join** to join, **❌ Leave** to leave, or **👥 Members** to see who's in."
+            ),
             color=discord.Colour(doc.get("color", 0)),
         )
         return embed

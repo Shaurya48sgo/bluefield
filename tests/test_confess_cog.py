@@ -19,6 +19,7 @@ def make_cog(db):
     db.blacklist.drop()
     db.secret_messages.drop()
     db.inbox.drop()
+    db.reveal_proposals.drop()
     cog = ConfessCog(MagicMock())
     cog.bot = MagicMock()
     from cogs import common, confess
@@ -30,6 +31,7 @@ def make_cog(db):
         mod.BL = db["blacklist"]
         mod.M = db["secret_messages"]
         mod.I = db["inbox"]
+        mod.RP = db["reveal_proposals"]
     return cog
 
 
@@ -85,8 +87,16 @@ def make_interaction(member, guild=None, channel_id=555):
     return interaction
 
 
-def add_code(db, uid=100, code="TESTCODE", guild_id=1):
-    db["anon_codes"].insert_one({"guild_id": guild_id, "user_id": uid, "code": code})
+def add_code(db, uid=100, code="TESTCODE", guild_id=1, nickname=None, suspended_until=None, history=None):
+    doc = {"guild_id": guild_id, "user_id": uid, "code": code}
+    if nickname is not None:
+        doc["nickname"] = nickname
+    if suspended_until is not None:
+        doc["suspended_until"] = suspended_until
+    if history is not None:
+        doc["suspend_history"] = history
+    db["anon_codes"].insert_one(doc)
+    return doc
 
 
 @skip
@@ -832,5 +842,220 @@ def test_reply_generate_new_flow_color_then_compose_modal():
         asyncio.run(modal.on_submit(submit))
         assert db["anon_codes"].find_one({"code": code})["nickname"] == "CoolNick"
         cog.post_reply.assert_awaited_once()
+    finally:
+        client.close()
+
+
+@skip
+def test_reveal_propose_success_sends_dm():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        add_code(db, uid=100, code="MYCODE1")
+        add_code(db, uid=200, code="OTHERCODE", nickname="OtherNick")
+        target_user = MagicMock()
+        target_user.send = AsyncMock()
+        cog.bot.get_user = MagicMock(return_value=target_user)
+        member = make_member(uid=100)
+        interaction = make_interaction(member)
+        asyncio.run(cog.reveal_propose.callback(cog, interaction, "othercode", "mycode1", False))
+        assert db["reveal_proposals"].count_documents({"status": "pending"}) == 1
+        target_user.send.assert_awaited_once()
+        interaction.response.send_message.assert_awaited_once()
+    finally:
+        client.close()
+
+
+@skip
+def test_reveal_propose_rejects_own_codes():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        add_code(db, uid=100, code="MINE1")
+        member = make_member(uid=100)
+        interaction = make_interaction(member)
+        # own code as target
+        asyncio.run(cog.reveal_propose.callback(cog, interaction, "mine1", "mine1", False))
+        msg = interaction.response.send_message.await_args.args[0]
+        assert "own code" in msg
+        # not my code
+        add_code(db, uid=200, code="THEIRS")
+        asyncio.run(cog.reveal_propose.callback(cog, interaction, "theirs", "NOTMINE", False))
+        msg = interaction.response.send_message.await_args.args[0]
+        assert "not one of your codes" in msg
+        assert db["reveal_proposals"].count_documents({}) == 0
+    finally:
+        client.close()
+
+
+@skip
+def test_reveal_accept_reveals_and_deletes():
+    client, db = get_test_db()
+    from cogs.confess import RevealDecisionView
+
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        add_code(db, uid=100, code="CODEA")
+        add_code(db, uid=200, code="CODEB")
+        prop_id = db["reveal_proposals"].insert_one(
+            {
+                "guild_id": 1,
+                "from_user_id": 100,
+                "from_code": "CODEA",
+                "to_code": "CODEB",
+                "delete": True,
+                "status": "pending",
+                "created_at": datetime.now(timezone.utc),
+            }
+        ).inserted_id
+        from_user = MagicMock()
+        from_user.send = AsyncMock()
+        from_user.name = "FromUser"
+        cog.bot.get_user = MagicMock(return_value=from_user)
+        to_member = make_member(uid=200)
+        to_interaction = make_interaction(to_member)
+        to_interaction.response.edit_message = AsyncMock()
+        view = RevealDecisionView(cog, prop_id, 200)
+        asyncio.run(view.accept.callback(to_interaction))
+        assert db["reveal_proposals"].find_one({"_id": prop_id})["status"] == "accepted"
+        # both codes deleted (also_delete=True)
+        assert db["anon_codes"].count_documents({"code": {"$in": ["CODEA", "CODEB"]}}) == 0
+        # both users DMed the reveal
+        assert from_user.send.await_count == 1
+    finally:
+        client.close()
+
+
+@skip
+def test_reveal_accept_wrong_user_blocked():
+    client, db = get_test_db()
+    from cogs.confess import RevealDecisionView
+
+    try:
+        cog = make_cog(db)
+        view = RevealDecisionView(cog, "x" * 24, 200)
+        outsider = make_member(uid=999)
+        interaction = make_interaction(outsider)
+        allowed = asyncio.run(view.interaction_check(interaction))
+        assert allowed is False
+    finally:
+        client.close()
+
+
+@skip
+def test_report_requires_channel_and_posts_embed():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        add_code(db, uid=200, code="BADCODE", nickname="BadNick")
+        reporter = make_member(uid=100)
+        guild = make_guild()
+        reporter.guild = guild
+        # no reports channel set yet
+        interaction = make_interaction(reporter, guild=guild)
+        asyncio.run(cog.report.callback(cog, interaction, "badcode", "They broke the rules"))
+        msg = interaction.response.send_message.await_args.args[0]
+        assert "set up" in msg
+        # set reports channel
+        db["guild_settings"].insert_one({"guild_id": 1, "report_log_channel_id": 777})
+        channel = guild.get_channel(777)
+        asyncio.run(cog.report.callback(cog, interaction, "badcode", "They broke the rules"))
+        channel.send.assert_awaited_once()
+        embed = channel.send.await_args.kwargs["embed"]
+        assert "BADCODE" in embed.title
+        assert any(f.value == "BadNick" for f in embed.fields)
+        # cooldown blocks second report within 60s
+        asyncio.run(cog.report.callback(cog, interaction, "badcode", "Another reason here"))
+        last_msg = interaction.response.send_message.await_args.args[0]
+        assert "wait" in last_msg
+    finally:
+        client.close()
+
+
+@skip
+def test_suspend_by_mod_logs_history():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        add_code(db, uid=200, code="SUSCODE", nickname="SusNick")
+        db["guild_settings"].insert_one({"guild_id": 1, "mod_ids": [500]})
+        mod_member = make_member(uid=500)
+        ctx = MagicMock()
+        ctx.author = mod_member
+        ctx.guild = make_guild()
+        ctx.guild.id = 1
+        ctx.send = AsyncMock()
+        asyncio.run(cog.suspend.callback(cog, ctx, "suscode", "1h"))
+        doc = db["anon_codes"].find_one({"code": "SUSCODE"})
+        assert doc.get("suspended_until") is not None
+        assert len(doc.get("suspend_history", [])) == 1
+        assert doc["suspend_history"][0]["action"] == "suspend"
+        assert doc["suspend_history"][0]["by"] == 500
+        ctx.send.assert_awaited_once()
+    finally:
+        client.close()
+
+
+@skip
+def test_unsuspend_denied_for_regular_member():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        add_code(db, uid=200, code="SUSCODE2", suspended_until=datetime.now(timezone.utc))
+        regular = make_member(uid=300)
+        ctx = MagicMock()
+        ctx.author = regular
+        ctx.guild = make_guild()
+        ctx.guild.id = 1
+        ctx.send = AsyncMock()
+        asyncio.run(cog.unsuspend.callback(cog, ctx, "suscode2"))
+        ctx.send.assert_awaited_once()
+        assert "mods" in ctx.send.await_args.args[0]
+        # still suspended
+        assert db["anon_codes"].find_one({"code": "SUSCODE2"}).get("suspended_until") is not None
+    finally:
+        client.close()
+
+
+@skip
+def test_hacks_profile_numeric_query():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        add_code(db, uid=100, code="PROFCODE", nickname="ProfNick")
+        hist = [{"action": "suspend", "by": 500, "until": datetime.now(timezone.utc), "at": datetime.now(timezone.utc)}]
+        add_code(db, uid=100, code="PROFCODE2", nickname="Second", history=hist)
+        db["secret_messages"].insert_one(
+            {
+                "guild_id": 1,
+                "channel_id": 555,
+                "message_id": 999111,
+                "code": "PROFCODE",
+                "owner_id": 100,
+                "post_number": 3,
+                "created_at": datetime.now(timezone.utc),
+            }
+        )
+        owner = make_member(uid=100)
+        from cogs import common as common_mod
+
+        old_owner_id = common_mod.OWNER_ID
+        common_mod.OWNER_ID = "100"
+        try:
+            ctx = MagicMock()
+            ctx.message.author = owner
+            ctx.message.guild = None
+            ctx.author = owner
+            ctx.send = AsyncMock()
+            asyncio.run(cog.hackssearch.callback(cog, ctx, query="100"))
+        finally:
+            common_mod.OWNER_ID = old_owner_id
+        embed = ctx.send.await_args.kwargs["embed"]
+        assert "Hacks profile" in embed.title
+        field_names = [f.name for f in embed.fields]
+        assert any("PROFCODE" in n for n in field_names)
+        assert any("suspension" in n for n in field_names)
+        assert any("Recent posts" in n for n in field_names)
     finally:
         client.close()
