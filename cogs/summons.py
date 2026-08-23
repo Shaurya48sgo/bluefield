@@ -757,8 +757,11 @@ class SummonsCog(commands.Cog):
                         " ".join(m.mention for m in c), allowed_mentions=allowed
                     )
                     msgs.append(msg)
-                asyncio.create_task(self._cleanup_pings(msgs))
-            await interaction.followup.send(bold)
+                await asyncio.sleep(3)
+                await msgs[0].edit(content=bold)
+                asyncio.create_task(self._cleanup_pings(msgs[1:]))
+            else:
+                await interaction.followup.send(bold)
             audit(guild.id, member.id, "summon", "role", real_role.id, real_role.name)
             await self.log_activity(
                 guild,
@@ -779,11 +782,12 @@ class SummonsCog(commands.Cog):
                     " ".join(_mention(uid) for uid in c), allowed_mentions=allowed
                 )
                 msgs.append(msg)
-            await interaction.followup.send(
-                bold,
+            await asyncio.sleep(3)
+            await msgs[0].edit(
+                content=bold,
                 view=MembersButton(self, guild.id, str(doc["_id"])),
             )
-            asyncio.create_task(self._cleanup_pings(msgs))
+            asyncio.create_task(self._cleanup_pings(msgs[1:]))
         audit(guild.id, member.id, "summon", "summon", str(doc["_id"]), doc["name"])
         await self.log_activity(
             guild,
