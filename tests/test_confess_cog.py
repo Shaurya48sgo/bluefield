@@ -80,6 +80,7 @@ def make_interaction(member, guild=None, channel_id=555):
     interaction.channel_id = channel_id
     interaction.response.send_message = AsyncMock()
     interaction.response.edit_message = AsyncMock()
+    interaction.response.send_modal = AsyncMock()
     interaction.followup.send = AsyncMock()
     return interaction
 
@@ -246,10 +247,7 @@ def test_say_auto_generates_first_code():
         member = make_member(uid=100)
         interaction = make_interaction(member, channel_id=555)
         asyncio.run(cog.say.callback(cog, interaction, "first secret", "GENERATE_NEW"))
-        channel = interaction.guild.get_channel(555)
-        channel.send.assert_awaited_once()
-        embed = channel.send.await_args.kwargs["embed"]
-        assert "first secret" in embed.description
+        interaction.response.send_modal.assert_awaited_once()
         assert db["anon_codes"].count_documents({"user_id": 100}) == 1
     finally:
         client.close()
@@ -527,9 +525,8 @@ def test_post_reply_uses_reference_to_original():
 
 @skip
 def test_build_secret_embed_layout():
-    from cogs.layouts import build_secret, SECRET_LAYOUTS
-    assert len(SECRET_LAYOUTS) == 20
-    e = build_secret(1, "X7KQ9FD2", "ShadowFox", "hello", 42)
+    from cogs.layouts import build_secret
+    e = build_secret("X7KQ9FD2", "ShadowFox", "hello", 42)
     assert "ShadowFox" in e.description
     assert "X7KQ9FD2" in e.description
     assert "hello" in e.description
@@ -538,13 +535,13 @@ def test_build_secret_embed_layout():
 
 @skip
 def test_build_reply_embed_layout():
-    from cogs.layouts import build_reply, REPLY_LAYOUTS
-    assert len(REPLY_LAYOUTS) == 20
-    e = build_reply(0, "REPLYCODE", "ReplyNick", "ORIGCODE", "TargetNick", 7, "hello")
+    from cogs.layouts import build_reply
+    e = build_reply("REPLYCODE", "ReplyNick", "ORIGCODE", "TargetNick", 7, "hello")
     assert "REPLYCODE" in e.description
     assert "ORIGCODE" in e.description
     assert "7" in e.description
-    assert e.author.name == "ReplyNick"
+    assert "ReplyNick" in e.description
+    assert "TargetNick" in e.description
 
 
 @skip
@@ -736,5 +733,62 @@ def test_hacks_search_by_user_id_and_code():
         assert len(by_nick) == 1
         by_partial = cog._hacks_search("ABC")
         assert len(by_partial) == 1
+    finally:
+        client.close()
+
+
+@skip
+def test_new_secret_modal_sets_nickname_and_shows_colors():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        db["guild_settings"].insert_one({"guild_id": 1, "confess_channel_id": 555})
+        member = make_member(uid=100)
+        interaction = make_interaction(member, channel_id=555)
+        asyncio.run(cog.say.callback(cog, interaction, "hi", "GENERATE_NEW"))
+        code = db["anon_codes"].find_one({"user_id": 100})["code"]
+        from cogs.confess import NewSecretModal, ColorPickView, COLOR_EMOJIS, SECRET_COLORS
+        # build modal manually
+        code_doc = db["anon_codes"].find_one({"user_id": 100})
+        modal = NewSecretModal(cog, interaction, 1, code, "hi", code_doc["nickname"])
+        assert modal.nick_input.default == code_doc["nickname"]
+        # submit modal with a chosen nickname
+        submit = make_interaction(member, channel_id=555)
+        submit.response.send_message = AsyncMock()
+        modal.nick_input = MagicMock()
+        modal.nick_input.value = "MyCustom"
+        asyncio.run(modal.on_submit(submit))
+        doc = db["anon_codes"].find_one({"user_id": 100})
+        assert doc["nickname"] == "MyCustom"
+        submit.response.send_message.assert_awaited_once()
+        view = submit.response.send_message.await_args.kwargs["view"]
+        assert isinstance(view, ColorPickView)
+        assert len(view.children) == len(SECRET_COLORS)
+    finally:
+        client.close()
+
+
+@skip
+def test_color_pick_posts_with_color():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        db["guild_settings"].insert_one({"guild_id": 1, "confess_channel_id": 555})
+        member = make_member(uid=100)
+        interaction = make_interaction(member, channel_id=555)
+        asyncio.run(cog.say.callback(cog, interaction, "hi", "GENERATE_NEW"))
+        code = db["anon_codes"].find_one({"user_id": 100})["code"]
+        from cogs.confess import ColorPickView
+        submit = make_interaction(member, channel_id=555)
+        view = ColorPickView(cog, submit, 1, code, "hi")
+        pick = make_interaction(member, channel_id=555)
+        button = view.children[0]
+        asyncio.run(button.callback(pick, button))
+        channel = pick.guild.get_channel(555)
+        channel.send.assert_awaited_once()
+        embed = channel.send.await_args.kwargs["embed"]
+        assert "hi" in embed.description
+        doc = db["anon_codes"].find_one({"user_id": 100})
+        assert doc["color"] is not None
     finally:
         client.close()

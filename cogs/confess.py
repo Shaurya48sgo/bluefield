@@ -18,12 +18,22 @@ from cogs.common import (
     set_guild_settings,
 )
 from cogs.layouts import (
-    REPLY_LAYOUTS,
-    SECRET_LAYOUTS,
+    SECRET_COLORS,
     build_reply,
     build_secret,
     random_nickname,
 )
+
+COLOR_EMOJIS = {
+    "Purple": "🟣",
+    "Blue": "🔵",
+    "Green": "🟢",
+    "Yellow": "🟡",
+    "Red": "🔴",
+    "Pink": "🩷",
+    "Orange": "🟠",
+    "Cyan": "🩵",
+}
 
 DEFAULT_MAX_CODES = 5
 
@@ -39,12 +49,8 @@ def _next_post(guild_id):
     return n
 
 
-def _layout_index(guild_id, key, default):
-    idx = get_guild_settings(guild_id).get(key, default)
-    try:
-        return int(idx)
-    except Exception:
-        return default
+def _jump_link(guild_id, channel_id, message_id):
+    return f"https://discord.com/channels/{guild_id}/{channel_id}/{message_id}"
 
 
 class SecretReplyModal(discord.ui.Modal):
@@ -179,6 +185,59 @@ class InboxView(discord.ui.View):
         await interaction.response.edit_message(embed=embed)
 
 
+class NewSecretModal(discord.ui.Modal):
+    def __init__(self, cog, interaction, guild_id, code, message, default_nick):
+        super().__init__(title="Your new code")
+        self.cog = cog
+        self.interaction = interaction
+        self.guild_id = guild_id
+        self.code = code
+        self.message = message
+        self.nick_input = discord.ui.TextInput(
+            label="Nickname", max_length=32, required=True, default=default_nick or ""
+        )
+        self.add_item(self.nick_input)
+
+    async def on_submit(self, interaction):
+        nick = self.nick_input.value.strip()
+        if not nick:
+            await interaction.response.send_message("Nickname cannot be empty.", ephemeral=True)
+            return
+        C.update_one({"code": self.code, "user_id": interaction.user.id}, {"$set": {"nickname": nick}})
+        embed = discord.Embed(
+            title="Pick a color",
+            color=discord.Colour(0x9B59B6),
+            description="Choose the color for this code's messages. "
+            + " ".join(f"{e} {n}" for e, n in COLOR_EMOJIS.items()),
+        )
+        await interaction.response.send_message(
+            embed=embed, view=ColorPickView(self.cog, interaction, self.guild_id, self.code, self.message),
+            ephemeral=True,
+        )
+
+
+class ColorPickView(discord.ui.View):
+    def __init__(self, cog, interaction, guild_id, code, message):
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.interaction = interaction
+        self.guild_id = guild_id
+        self.code = code
+        self.message = message
+        for name, value in SECRET_COLORS.items():
+            emoji = COLOR_EMOJIS.get(name)
+            btn = discord.ui.Button(label=name, style=discord.ButtonStyle.secondary, emoji=emoji)
+            btn.callback = self.make_pick(value)
+            self.add_item(btn)
+
+    def make_pick(self, color_value):
+        async def pick(interaction, button):
+            C.update_one({"code": self.code, "user_id": interaction.user.id}, {"$set": {"color": color_value}})
+            await self.cog._post_secret(interaction, self.guild_id, self.code, self.message, color_value)
+
+        return pick
+
+
 class HacksSearchModal(discord.ui.Modal):
     def __init__(self, cog):
         super().__init__(title="Hacks search")
@@ -249,62 +308,21 @@ class ConfessCog(commands.Cog):
 
     @commands.command(name="layout")
     async def layout(self, ctx):
-        """Preview all secret message layouts (owner only)."""
+        """Preview the unified secret & reply layout (owner only)."""
         if not is_owner(ctx.author.id):
             await ctx.send("Only the bot owner can view layouts.")
             return
-        code = "K7QX9FD2"
-        nick = "ShadowFox"
-        lines = []
-        for i, layout in enumerate(SECRET_LAYOUTS):
-            msg = f"This is a sample secret message — Layout #{i + 1} ({layout['name']})."
-            embed = build_secret(i, code, nick, msg, 42)
-            await ctx.send(embed=embed)
-            lines.append(f"{i + 1}. {layout['name']}")
-        await ctx.send("Reply with `I?layoutset <n>` to choose a secret layout.")
-
-    @commands.command(name="layoutr")
-    async def layoutr(self, ctx):
-        """Preview all 20 reply layouts (owner only)."""
-        if not is_owner(ctx.author.id):
-            await ctx.send("Only the bot owner can view reply layouts.")
-            return
-        r = "REPLYCODE"
-        t = "ORIGCODE"
-        text = "Sample reply text to preview this layout."
-        lines = []
-        for i, layout in enumerate(REPLY_LAYOUTS):
-            embed = build_reply(i, r, t, 42, text)
-            embed.title = f"Reply Layout {i + 1} · {layout['name']}"
-            await ctx.send(embed=embed)
-            lines.append(f"{i + 1}. {layout['name']}")
-        await ctx.send("Reply with `I?layoutrset <n>` to choose a reply layout.")
-
-    @commands.command(name="layoutset")
-    async def layoutset(self, ctx, num: int = None):
-        """Choose a secret message layout (owner only)."""
-        if not is_owner(ctx.author.id):
-            await ctx.send("Only the bot owner can set layouts.")
-            return
-        if num is None or num < 1 or num > len(SECRET_LAYOUTS):
-            await ctx.send(f"Pick a number 1-{len(SECRET_LAYOUTS)}.")
-            return
-        set_guild_settings(ctx.guild.id, secret_layout=num - 1)
-        audit(ctx.guild.id, ctx.author.id, "settings", "guild", ctx.guild.id, f"secret layout -> {num}")
-        await ctx.send(f"✅ Secret layout set to **{num} · {SECRET_LAYOUTS[num - 1]['name']}**.")
-
-    @commands.command(name="layoutrset")
-    async def layoutrset(self, ctx, num: int = None):
-        """Choose a reply layout (owner only)."""
-        if not is_owner(ctx.author.id):
-            await ctx.send("Only the bot owner can set layouts.")
-            return
-        if num is None or num < 1 or num > len(REPLY_LAYOUTS):
-            await ctx.send(f"Pick a number 1-{len(REPLY_LAYOUTS)}.")
-            return
-        set_guild_settings(ctx.guild.id, reply_layout=num - 1)
-        audit(ctx.guild.id, ctx.author.id, "settings", "guild", ctx.guild.id, f"reply layout -> {num}")
-        await ctx.send(f"✅ Reply layout set to **{num} · {REPLY_LAYOUTS[num - 1]['name']}**.")
+        await ctx.send(
+            "This is the **unified** layout used for every secret message:",
+            embed=build_secret("K7QX9FD2", "ShadowFox", "Sample secret message.", 42),
+        )
+        await ctx.send(
+            "This is the **unified** reply layout:",
+            embed=build_reply(
+                "REPLYCODE", "SwiftWolf", "ORIGCODE", "NightOwl", 7, "Sample reply text.",
+                link="https://discord.com/channels/1/2/3",
+            ),
+        )
 
     # ---------- slash: /secret say ----------
 
@@ -390,6 +408,10 @@ class ConfessCog(commands.Cog):
                 return
             code = self._new_code(gid, uid)
             docs = list(C.find({"user_id": uid}).sort("created_at", 1))
+            code_doc = C.find_one({"code": code, "user_id": uid})
+            modal = NewSecretModal(self, interaction, gid, code, message, code_doc.get("nickname"))
+            await interaction.response.send_modal(modal)
+            return
         else:
             code_doc = C.find_one({"code": code, "user_id": uid})
             if not code_doc:
@@ -401,43 +423,7 @@ class ConfessCog(commands.Cog):
                     f"⛔ This code is **suspended** until {until.strftime('%Y-%m-%d %H:%M UTC')}."
                 )
                 return
-
-        post_number = _next_post(gid)
-        code_doc = C.find_one({"code": code, "user_id": uid})
-        nickname = code_doc.get("nickname") if code_doc else None
-        layout_idx = _layout_index(gid, "secret_layout", 0)
-        embed = build_secret(layout_idx, code, nickname, message, post_number)
-        view = SecretReplyView(self, gid, channel.id, code)
-        try:
-            sent = await channel.send(
-                embed=embed,
-                view=view,
-                allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=False),
-            )
-        except Exception as e:
-            embed = discord.Embed(color=discord.Colour(0xED4245), description=f"Failed to post: {e}")
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-        M.insert_one(
-            {
-                "guild_id": gid,
-                "channel_id": channel.id,
-                "message_id": sent.id,
-                "code": code,
-                "owner_id": uid,
-                "post_number": post_number,
-                "created_at": datetime.now(timezone.utc),
-            }
-        )
-
-        confirm = discord.Embed(
-            title="Posted anonymously",
-            color=discord.Colour(0x9B59B6),
-            description=f"Your secret message was posted with code **`{code}`**.\n"
-            + ("Your codes: " + ", ".join(f"`{d['code']}`" for d in docs) if docs else "You have no codes.")
-            + f" ({len(docs)}/{limit} slots)\nNext time pick a code or 'Generate new' in `/secret say`.",
-        )
-        await interaction.response.send_message(embed=confirm, ephemeral=True)
+            await self._post_secret(interaction, gid, code, message, color=code_doc.get("color"))
 
     async def post_reply(self, interaction, guild_id, channel_id, original_code, code, text, original_message=None):
         target_post = None
@@ -449,8 +435,11 @@ class ConfessCog(commands.Cog):
         target_doc = C.find_one({"code": original_code})
         reply_nick = reply_doc.get("nickname") if reply_doc else None
         target_nick = target_doc.get("nickname") if target_doc else None
-        layout_idx = _layout_index(guild_id, "reply_layout", 0)
-        embed = build_reply(layout_idx, code, reply_nick, original_code, target_nick, target_post, text)
+        reply_color = reply_doc.get("color") if reply_doc else None
+        link = None
+        if original_message is not None:
+            link = _jump_link(guild_id, channel_id, original_message.id)
+        embed = build_reply(code, reply_nick, original_code, target_nick, target_post, text, link=link, color=reply_color)
         channel = interaction.guild.get_channel(channel_id)
         if channel is None:
             await interaction.response.send_message("That channel no longer exists.")
@@ -505,6 +494,50 @@ class ConfessCog(commands.Cog):
                 pass
         M.delete_many(query)
         return removed
+
+    async def _post_secret(self, interaction, guild_id, code, message, color=None):
+        channel = self._channel(interaction.guild)
+        if channel is None:
+            await interaction.response.send_message("Anonymous chat isn't enabled in this server.", ephemeral=True)
+            return
+        uid = interaction.user.id
+        post_number = _next_post(guild_id)
+        code_doc = C.find_one({"code": code, "user_id": uid})
+        nickname = code_doc.get("nickname") if code_doc else None
+        if color is None:
+            color = code_doc.get("color") if code_doc else None
+        embed = build_secret(code, nickname, message, post_number, color=color)
+        view = SecretReplyView(self, guild_id, channel.id, code)
+        try:
+            sent = await channel.send(
+                embed=embed,
+                view=view,
+                allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=False),
+            )
+        except Exception as e:
+            await interaction.response.send_message(f"Failed to post: {e}", ephemeral=True)
+            return
+        M.insert_one(
+            {
+                "guild_id": guild_id,
+                "channel_id": channel.id,
+                "message_id": sent.id,
+                "code": code,
+                "owner_id": uid,
+                "post_number": post_number,
+                "created_at": datetime.now(timezone.utc),
+            }
+        )
+        limit = self._max_codes(guild_id)
+        docs = list(C.find({"user_id": uid}).sort("created_at", 1))
+        confirm = discord.Embed(
+            title="Posted anonymously",
+            color=discord.Colour(0x9B59B6),
+            description=f"Your secret message was posted with code **`{code}`**.\n"
+            + ("Your codes: " + ", ".join(f"`{d['code']}`" for d in docs) if docs else "You have no codes.")
+            + f" ({len(docs)}/{limit} slots)\nNext time pick a code or 'Generate new' in `/secret say`.",
+        )
+        await interaction.response.send_message(embed=confirm, ephemeral=True)
 
     def _new_code(self, guild_id, user_id):
         limit = self._max_codes(guild_id)
