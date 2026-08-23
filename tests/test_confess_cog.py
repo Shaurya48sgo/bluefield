@@ -815,8 +815,7 @@ def test_reply_generate_new_flow_color_then_compose_modal():
         pick_interaction.response.send_modal = AsyncMock()
         view = ReplyColorPickView(cog, pick_interaction, 1, 555, "ORIGINAL", code, "RandomNick", MagicMock())
         assert len(view.color_select.options) == len(SECRET_COLORS)
-        view.color_select = MagicMock()
-        view.color_select.values = ["12345"]
+        view.picked_color = 12345
         asyncio.run(view.on_confirm(pick_interaction))
         assert db["anon_codes"].find_one({"code": code})["color"] == 12345
         pick_interaction.response.send_modal.assert_awaited_once()

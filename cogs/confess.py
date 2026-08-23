@@ -295,10 +295,13 @@ class ReplyColorPickView(discord.ui.View):
         self.add_item(self.confirm)
 
     async def on_color(self, interaction):
+        self.picked_color = int(self.color_select.values[0])
         await interaction.response.defer()
 
     async def on_confirm(self, interaction):
-        color_value = int(self.color_select.values[0])
+        color_value = getattr(self, "picked_color", None)
+        if color_value is None:
+            color_value = list(SECRET_COLORS.values())[0]
         C.update_one({"code": self.code, "user_id": interaction.user.id}, {"$set": {"color": color_value}})
         await interaction.response.send_modal(
             ReplyComposeModal(
