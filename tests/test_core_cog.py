@@ -239,3 +239,76 @@ def test_guild_gate_check_blocks_and_exempts_server_cmd():
         assert asyncio.run(main_mod.tree_interaction_check(FakeDM())) is True
     finally:
         client.close()
+
+
+@skip
+def test_server_grant_revoke_setup_access():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        with bot_owner_uid("100"):
+            guild = MagicMock()
+            guild.id = 1
+            author = make_admin(100)
+            target_user = make_user(777)
+            target_user.mention = "<@777>"
+            channel = MagicMock()
+            channel.id = 888
+            channel.send = AsyncMock()
+            ctx = MagicMock()
+            ctx.author = author
+            ctx.guild = guild
+            ctx.channel = channel
+            ctx.send = AsyncMock()
+            ctx.message.mentions = [target_user]
+
+            asyncio.run(cog.server_cmd.callback(cog, ctx, None, "-y"))
+            assert db["guild_settings"].find_one({"guild_id": 1})["setup_ids"] == [777]
+            assert "can now run" in ctx.send.await_args.args[0]
+
+            # duplicate
+            asyncio.run(cog.server_cmd.callback(cog, ctx, None, "-y"))
+            assert "already" in ctx.send.await_args.args[0]
+
+            # revoke
+            asyncio.run(cog.server_cmd.callback(cog, ctx, None, "-r"))
+            assert db["guild_settings"].find_one({"guild_id": 1})["setup_ids"] == []
+    finally:
+        client.close()
+
+
+@skip
+def test_setup_access_predicate_and_denied_granter():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        # plain member cannot grant
+        ctx = make_ctx(make_user(555))
+        granter_target = make_user(999)
+        ctx.message.mentions = [granter_target]
+        asyncio.run(cog.server_cmd.callback(cog, ctx, None, "-y"))
+        assert "server owner or devs" in ctx.send.await_args.args[0]
+        assert db["guild_settings"].find_one({"guild_id": 1}) is None
+
+        # predicate: setup member passes on channel commands
+        db["guild_settings"].insert_one({"guild_id": 1, "setup_ids": [777]})
+        from cogs.common import has_setup_access
+
+        check = has_setup_access()
+        setup_member = make_user(777)
+        setup_member.guild = MagicMock()
+        setup_member.guild.id = 1
+        sctx = MagicMock()
+        sctx.author = setup_member
+        sctx.guild = setup_member.guild
+        assert asyncio.run(check.predicate(sctx)) is True
+
+        plain = make_user(888)
+        plain.guild = MagicMock()
+        plain.guild.id = 1
+        pctx = MagicMock()
+        pctx.author = plain
+        pctx.guild = plain.guild
+        assert asyncio.run(check.predicate(pctx)) is False
+    finally:
+        client.close()

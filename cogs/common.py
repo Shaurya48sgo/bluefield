@@ -153,6 +153,31 @@ def is_mod(guild_id, user_id):
     return user_id in get_mod_ids(guild_id)
 
 
+def get_setup_ids(guild_id):
+    return get_guild_settings(guild_id).get("setup_ids", [])
+
+
+def is_setup(guild_id, user_id):
+    return user_id in get_setup_ids(guild_id)
+
+
+def has_setup_access():
+    """Admins, devs, bot owner, or users granted setup access via I?server <@user> -y."""
+
+    async def predicate(ctx):
+        if is_owner(ctx.author.id):
+            return True
+        if ctx.guild is None:
+            return False
+        if is_dev(ctx.guild.id, ctx.author.id):
+            return True
+        if is_admin(ctx.author):
+            return True
+        return is_setup(ctx.guild.id, ctx.author.id)
+
+    return commands.check(predicate)
+
+
 def is_bot_enabled(guild_id):
     return not get_guild_settings(guild_id).get("bot_disabled", False)
 

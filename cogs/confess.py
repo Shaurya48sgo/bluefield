@@ -14,6 +14,7 @@ from cogs.common import (
     generate_code,
     get_guild_settings,
     has_admin_or_dev,
+    has_setup_access,
     is_admin,
     is_blacklisted,
     is_dev,
@@ -568,7 +569,7 @@ class ConfessCog(commands.Cog):
     # ---------- prefix: per-channel setup ----------
 
     @commands.command(name="confesschannel")
-    @has_admin_or_dev()
+    @has_setup_access()
     async def confesschannel(self, ctx):
         """Make the current channel the anonymous chat channel."""
         set_guild_settings(ctx.guild.id, confess_channel_id=ctx.channel.id)

@@ -14,10 +14,13 @@ from cogs.common import (
     get_guild_settings,
     get_dev_ids,
     get_mod_ids,
+    get_setup_ids,
     has_admin_or_dev,
+    has_setup_access,
     is_bot_enabled,
     is_dev,
     is_owner,
+    is_setup,
     set_bot_enabled,
     set_guild_prefix,
     set_guild_settings,
@@ -107,6 +110,7 @@ class HelpView(discord.ui.View):
                     (f"{self.prefix}mods", "List this server's mods."),
                     (f"{self.prefix}modlog", "Run IN a channel to make it the mod-log channel."),
                     (f"{self.prefix}reports", "Run IN a channel to make it the code-reports channel."),
+                    (f"{self.prefix}server", "Bot status here · `I?server enable|disable` (this server only) · `I?server <@user> -y|-r` grants channel-setup power."),
                     (f"{self.prefix}devhelp", "DM you the full staff guide: channel setup + admin/dev commands."),
                     (f"{self.prefix}suspend <code> <duration>", "Suspend a code, e.g. `30m`, `2h`, `1w` (admins/devs/mods)."),
                     (f"{self.prefix}unsuspend <code>", "Remove a suspension (admins/devs/mods)."),
@@ -282,7 +286,7 @@ class CoreCog(commands.Cog):
         await ctx.send("🛡️ Mods: " + " ".join(f"<@{m}>" for m in mods))
 
     @commands.command(name="modlog")
-    @has_admin_or_dev()
+    @has_setup_access()
     async def modlog(self, ctx):
         """Make the current channel the mod-log channel."""
         set_guild_settings(ctx.guild.id, mod_log_channel_id=ctx.channel.id)
@@ -290,7 +294,7 @@ class CoreCog(commands.Cog):
         await ctx.send(f"✅ Mod-log channel set to {ctx.channel.mention}.")
 
     @commands.command(name="reports")
-    @has_admin_or_dev()
+    @has_setup_access()
     async def reports(self, ctx):
         """Make the current channel the code-reports channel."""
         set_guild_settings(ctx.guild.id, report_log_channel_id=ctx.channel.id)
@@ -298,18 +302,82 @@ class CoreCog(commands.Cog):
         await ctx.send(f"✅ Code reports will be submitted to {ctx.channel.mention}.")
 
     @commands.command(name="server")
-    @has_admin_or_dev()
-    async def server_cmd(self, ctx, action: str = None):
-        """Bot status in this server; enable/disable the bot here only."""
+    async def server_cmd(self, ctx, action: str = None, flag: str = None):
+        """Bot status in this server; enable/disable it; grant/revoke setup access."""
         gid = ctx.guild.id
         settings = get_guild_settings(gid)
         enabled = not settings.get("bot_disabled", False)
+
+        # I?server <@user> -y|-r -> grant/revoke channel-setup access
+        mentions = ctx.message.mentions if hasattr(ctx.message, "mentions") else []
+        if flag is not None:
+            allowed_granter = is_owner(ctx.author.id) or ctx.author.id == ctx.guild.owner_id or is_dev(gid, ctx.author.id)
+            if not allowed_granter:
+                await ctx.send("Only the bot owner, server owner or devs can manage setup access.")
+                return
+            if not mentions:
+                await ctx.send("Mention a user: `I?server <@user> -y|-r`")
+                return
+            user = mentions[0]
+            setup_ids = list(get_setup_ids(gid))
+            flag = flag.strip().lower()
+            if flag == "-y":
+                if user.id in setup_ids:
+                    await ctx.send(f"{user.mention} already has setup access.")
+                    return
+                setup_ids.append(user.id)
+                set_guild_settings(gid, setup_ids=setup_ids)
+                audit(gid, ctx.author.id, "setup_add", "user", user.id)
+                embed = discord.Embed(
+                    title="🔧 Setup access granted",
+                    color=discord.Colour(0x5865F2),
+                    description=f"**User:** {user.mention}\n**Granted by:** {ctx.author.mention}",
+                )
+                await self.send_mod_log(ctx.guild, embed)
+                await ctx.send(
+                    f"✅ {user.mention} can now run the channel setup commands in this server "
+                    "(confess/activity/member/modlog/reports)."
+                )
+            elif flag == "-r":
+                if user.id not in setup_ids:
+                    await ctx.send(f"{user.mention} doesn't have setup access.")
+                    return
+                setup_ids.remove(user.id)
+                set_guild_settings(gid, setup_ids=setup_ids)
+                audit(gid, ctx.author.id, "setup_remove", "user", user.id)
+                embed = discord.Embed(
+                    title="🔧 Setup access removed",
+                    color=discord.Colour(0x5865F2),
+                    description=f"**User:** {user.mention}\n**Removed by:** {ctx.author.mention}",
+                )
+                await self.send_mod_log(ctx.guild, embed)
+                await ctx.send(f"✅ {user.mention} no longer has setup access in this server.")
+            else:
+                await ctx.send("Usage: `I?server <@user> -y|-r` (-y grant, -r revoke)")
+            return
+
+        can_view = (
+            is_owner(ctx.author.id)
+            or is_dev(gid, ctx.author.id)
+            or is_admin(ctx.author)
+            or is_setup(gid, ctx.author.id)
+        )
+        if not can_view:
+            await ctx.send("You need admin/dev/setup access to view this.")
+            return
+        if action is not None and action.strip().lower() in ("disable", "enable"):
+            can_toggle = is_owner(ctx.author.id) or is_dev(gid, ctx.author.id) or is_admin(ctx.author)
+            if not can_toggle:
+                await ctx.send("Only admins/devs can enable or disable the bot in this server.")
+                return
+
         if action is None:
             def ch(key):
                 cid = settings.get(key)
                 return f"<#{cid}>" if cid else "❌ not set"
             mods = get_mod_ids(gid)
             devs = get_dev_ids(gid)
+            setup_ids = get_setup_ids(gid)
             embed = discord.Embed(
                 title=f"🖥️ Bot status · {ctx.guild.name}",
                 color=discord.Colour(0x57F287) if enabled else discord.Colour(0xED4245),
@@ -334,7 +402,8 @@ class CoreCog(commands.Cog):
                 name="Staff",
                 value=(
                     f"Mods: " + (" ".join(f"<@{m}>" for m in mods) if mods else "none") + "\n"
-                    + "Devs: " + (" ".join(f"<@{d}>" for d in devs) if devs else "none")
+                    + "Devs: " + (" ".join(f"<@{d}>" for d in devs) if devs else "none") + "\n"
+                    + "Setup access: " + (" ".join(f"<@{s}>" for s in setup_ids) if setup_ids else "none")
                 ),
                 inline=False,
             )
@@ -346,7 +415,7 @@ class CoreCog(commands.Cog):
                 ),
                 inline=False,
             )
-            embed.set_footer(text=f"Usage: I?server enable | I?server disable  · affects THIS server only")
+            embed.set_footer(text="Usage: I?server enable | I?server disable | I?server @user -y|-r · THIS server only")
             await ctx.send(embed=embed)
             return
         action = action.strip().lower()
@@ -414,9 +483,11 @@ class CoreCog(commands.Cog):
         cmds.add_field(
             name="Staff management",
             value=(
+                f"`{prefix}server <@user> -y|-r` — grant/revoke channel-setup power (owner/server owner/devs)\n"
                 f"`{prefix}mod <@user> -y|-r` — add/remove a mod (bot owner, server owner, devs)\n"
                 f"`{prefix}mods` — list mods\n"
-                f"`{prefix}dev <@user> -y|-r` — add/remove a dev"
+                f"`{prefix}dev <@user> -y|-r` — add/remove a dev\n"
+                f"`{prefix}server enable|disable` — toggle the bot in this server (admins/devs)"
             ),
             inline=False,
         )
@@ -457,7 +528,7 @@ class CoreCog(commands.Cog):
             await ctx.send("I can't DM you — enable **Allow direct messages from server members**.")
 
     @commands.command(name="activitychannel")
-    @has_admin_or_dev()
+    @has_setup_access()
     async def activitychannel(self, ctx):
         """Make the current channel the activity log channel."""
         set_guild_settings(ctx.guild.id, activity_log_channel_id=ctx.channel.id)
@@ -465,7 +536,7 @@ class CoreCog(commands.Cog):
         await ctx.send(f"✅ Activity log channel set to {ctx.channel.mention}.")
 
     @commands.command(name="memberchannel")
-    @has_admin_or_dev()
+    @has_setup_access()
     async def memberchannel(self, ctx):
         """Make the current channel the member log channel."""
         set_guild_settings(ctx.guild.id, member_log_channel_id=ctx.channel.id)
