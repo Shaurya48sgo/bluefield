@@ -248,6 +248,66 @@ class CoreCog(commands.Cog):
     async def before_punishment_loop(self):
         await self.bot.wait_until_ready()
 
+    @commands.Cog.listener()
+    async def on_member_update(self, before: discord.Member, after: discord.Member):
+        if before.guild is None or before.roles == after.roles:
+            return
+        gid = before.guild.id
+        punishments = get_guild_settings(gid).get("punishments", {})
+        if not punishments:
+            return
+        # role_id -> name map
+        rid_to_name = {rid: name for name, rid in punishments.items()}
+        before_ids = {r.id for r in before.roles}
+        after_ids = {r.id for r in after.roles}
+        # roles added
+        for rid in after_ids - before_ids:
+            if rid not in rid_to_name:
+                continue
+            # skip if this was a bot-initiated punish (already logged via B//punish with PS entry very recent)
+            recent = PS.find_one({"guild_id": gid, "user_id": after.id, "role_id": rid})
+            # if PS was created within last 8s, it was already logged as "Punishment applied" — don't double-log
+            if recent and recent.get("applied_at") and (datetime.now(timezone.utc) - recent["applied_at"].replace(tzinfo=timezone.utc) if recent["applied_at"].tzinfo is None else datetime.now(timezone.utc) - recent["applied_at"]).total_seconds() < 8:
+                continue
+            name = rid_to_name[rid]
+            role = after.guild.get_role(rid)
+            embed = discord.Embed(
+                title="🔨 Punishment role given",
+                color=discord.Colour(0xED4245),
+                description=(
+                    f"**User:** {after.mention}\n"
+                    f"**Punishment:** {name} ({role.mention if role else f'<@&{rid}>'})\n"
+                    f"**By:** manual / external"
+                ),
+            )
+            # create a PS entry if none exists so expiry still works for manual adds — default 1h
+            if not recent:
+                until = datetime.now(timezone.utc) + timedelta(hours=1)
+                PS.update_one(
+                    {"guild_id": gid, "user_id": after.id, "role_id": rid},
+                    {"$set": {"name": name, "until": until, "by": 0, "applied_at": datetime.now(timezone.utc)}},
+                    upsert=True,
+                )
+            await self.send_mod_log(after.guild, embed)
+
+        # roles removed
+        for rid in before_ids - after_ids:
+            if rid not in rid_to_name:
+                continue
+            name = rid_to_name[rid]
+            role = after.guild.get_role(rid)
+            # clean PS entry
+            PS.delete_many({"guild_id": gid, "user_id": after.id, "role_id": rid})
+            embed = discord.Embed(
+                title="✅ Punishment role removed",
+                color=discord.Colour(0x57F287),
+                description=(
+                    f"**User:** {after.mention}\n"
+                    f"**Punishment:** {name} ({role.mention if role else f'<@&{rid}>'})"
+                ),
+            )
+            await self.send_mod_log(after.guild, embed)
+
     def _norm_punishment_name(self, name: str) -> str:
         name = name.strip().lower()
         # strip outer brackets like [jail] / [ jail ] / [ jail]
