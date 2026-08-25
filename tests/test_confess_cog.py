@@ -1328,14 +1328,14 @@ def test_codecode_and_codeuse_vouchers():
             embed = ctx_dm.send.await_args.kwargs["embed"]
             assert voucher_doc["code"] in embed.description
 
-            # non-staff DM -> silent
+            # non-staff DM -> told they can't
             rando = make_member(uid=888)
             ctx_r = MagicMock()
             ctx_r.author = rando
             ctx_r.guild = None
             ctx_r.send = AsyncMock()
             asyncio.run(cog.codecode.callback(cog, ctx_r, 5))
-            ctx_r.send.assert_not_awaited()
+            assert "bot owner and devs" in ctx_r.send.await_args.args[0]
 
             # redeem: wrong code / valid / double redeem
             redeemer = make_member(uid=200)
