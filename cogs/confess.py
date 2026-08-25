@@ -13,6 +13,7 @@ from cogs.common import (
     US,
     audit,
     generate_code,
+    get_extra_code_slots,
     get_guild_settings,
     has_admin_or_dev,
     has_setup_access,
@@ -20,6 +21,7 @@ from cogs.common import (
     is_blacklisted,
     is_dev,
     is_mod,
+    add_extra_code_slots,
     is_owner,
     set_guild_settings,
 )
@@ -99,7 +101,7 @@ class ReplyCodeSelectView(discord.ui.View):
         options = [
             discord.SelectOption(label=f"{d.get('nickname', '?')} - {d['code']}", value=d["code"]) for d in docs
         ]
-        limit = self.cog._max_codes(guild_id)
+        limit = self.cog._max_codes(guild_id, self.author.id)
         if len(docs) < limit:
             options.append(discord.SelectOption(label="Generate new", value="GENERATE_NEW"))
         self.code_select = discord.ui.Select(placeholder="Pick your code", options=options)
@@ -115,7 +117,7 @@ class ReplyCodeSelectView(discord.ui.View):
     async def on_select(self, interaction):
         value = self.code_select.values[0]
         if value == "GENERATE_NEW":
-            limit = self.cog._max_codes(self.guild_id)
+            limit = self.cog._max_codes(self.guild_id, self.author.id)
             if len(self.docs) >= limit:
                 await interaction.response.send_message(
                     f"You've reached the limit of **{limit}** codes. Delete one first with `/secret code delete <code>`.",
@@ -578,8 +580,11 @@ class ConfessCog(commands.Cog):
         self.bot = bot
         self.last_report = {}
 
-    def _max_codes(self, guild_id):
-        return get_guild_settings(guild_id).get("confess_max_codes", DEFAULT_MAX_CODES)
+    def _max_codes(self, guild_id, user_id=None):
+        base = get_guild_settings(guild_id).get("confess_max_codes", DEFAULT_MAX_CODES)
+        if user_id is None:
+            return base
+        return base + get_extra_code_slots(guild_id, user_id)
 
     def _channel(self, guild):
         cid = get_guild_settings(guild.id).get("confess_channel_id")
@@ -594,6 +599,34 @@ class ConfessCog(commands.Cog):
         set_guild_settings(ctx.guild.id, confess_channel_id=ctx.channel.id)
         audit(ctx.guild.id, ctx.author.id, "settings", "guild", ctx.guild.id, f"confess channel -> #{ctx.channel.name}")
         await ctx.send(f"✅ Anonymous chat channel set to {ctx.channel.mention}.")
+
+    @commands.command(name="codeadd")
+    async def codeadd(self, ctx, user_id: int = None, number: int = None):
+        """Grant extra secret-code slots to a user (bot owner/devs only)."""
+        if not (is_owner(ctx.author.id) or is_dev(ctx.guild.id, ctx.author.id)):
+            await ctx.send("Only the bot owner and devs can manage extra code slots.")
+            return
+        if user_id is None or number is None:
+            await ctx.send("Usage: `I?codeadd <userid> <number>` (negative number removes)")
+            return
+        if number == 0:
+            await ctx.send("Number can't be 0.")
+            return
+        old = get_extra_code_slots(ctx.guild.id, user_id)
+        new_total = add_extra_code_slots(ctx.guild.id, user_id, number)
+        base = self._max_codes(ctx.guild.id)
+        audit(ctx.guild.id, ctx.author.id, "code_slots", "user", user_id, f"{number:+d} slots -> {new_total}")
+        if number > 0:
+            await ctx.send(
+                f"✅ Granted **{number}** extra code slot(s) to `<@{user_id}>` — "
+                f"their limit here is now **{base + new_total}** ({base} base + {new_total} bonus)."
+            )
+        else:
+            await ctx.send(
+                f"✅ Reduced `<@{user_id}>`'s bonus slots by **{abs(number)}** — "
+                f"their limit here is now **{base + new_total}** ({base} base + {new_total} bonus)."
+                + ("\n⚠️ Existing codes above the limit are untouched." if new_total < old else "")
+            )
 
     @commands.command(name="confessmax")
     @has_admin_or_dev()
@@ -643,7 +676,7 @@ class ConfessCog(commands.Cog):
             label = self._code_label(d)
             if current.lower() in label.lower() or current.lower() in d["code"].lower():
                 out.append(app_commands.Choice(name=label, value=d["code"]))
-        limit = self._max_codes(gid)
+        limit = self._max_codes(gid, uid)
         if len(docs) < limit:
             out.append(app_commands.Choice(name="Generate new", value="GENERATE_NEW"))
         return out[:25]
@@ -699,7 +732,7 @@ class ConfessCog(commands.Cog):
 
         uid = interaction.user.id
         gid = interaction.guild.id
-        limit = self._max_codes(gid)
+        limit = self._max_codes(gid, uid)
         docs = list(C.find({"user_id": uid}).sort("created_at", 1))
 
         target_doc = None
@@ -896,7 +929,7 @@ class ConfessCog(commands.Cog):
                 "created_at": datetime.now(timezone.utc),
             }
         )
-        limit = self._max_codes(guild_id)
+        limit = self._max_codes(guild_id, uid)
         docs = list(C.find({"user_id": uid}).sort("created_at", 1))
         confirm = discord.Embed(
             title="Posted anonymously",
@@ -908,7 +941,7 @@ class ConfessCog(commands.Cog):
         await interaction.response.send_message(embed=confirm, ephemeral=True)
 
     def _new_code(self, guild_id, user_id):
-        limit = self._max_codes(guild_id)
+        limit = self._max_codes(guild_id, user_id)
         count = C.count_documents({"user_id": user_id})
         if count >= limit:
             raise ValueError(f"limit {limit} reached")

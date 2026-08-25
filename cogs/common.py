@@ -162,6 +162,17 @@ def is_setup(guild_id, user_id):
     return user_id in get_setup_ids(guild_id)
 
 
+def get_extra_code_slots(guild_id, user_id):
+    return get_guild_settings(guild_id).get("extra_code_slots", {}).get(str(user_id), 0)
+
+
+def add_extra_code_slots(guild_id, user_id, delta):
+    """Adjust a user's extra code slots (clamped at 0); returns the new total."""
+    new_val = max(0, get_extra_code_slots(guild_id, user_id) + delta)
+    G.update_one({"guild_id": guild_id}, {"$set": {f"extra_code_slots.{user_id}": new_val}}, upsert=True)
+    return new_val
+
+
 def has_setup_access():
     """Admins, devs, bot owner, or users granted setup access via I?server <@user> -y."""
 

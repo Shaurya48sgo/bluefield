@@ -1158,3 +1158,72 @@ def test_post_reply_dms_target_and_respects_nodm():
         assert target_user.send.await_count == await_count_before
     finally:
         client.close()
+
+
+@skip
+def test_codeadd_permission_and_grant():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        from cogs import common as common_mod
+
+        old_owner_id = common_mod.OWNER_ID
+        common_mod.OWNER_ID = "100"
+        try:
+            # plain admin (not dev/owner) denied
+            admin = make_member(uid=999, administrator=True)
+            ctx = MagicMock()
+            ctx.author = admin
+            ctx.guild = make_guild()
+            ctx.guild.id = 1
+            ctx.send = AsyncMock()
+            asyncio.run(cog.codeadd.callback(cog, ctx, 555, 2))
+            assert "bot owner and devs" in ctx.send.await_args.args[0]
+            assert db["guild_settings"].find_one({"guild_id": 1}) is None
+
+            # owner grants 3 slots
+            owner = make_member(uid=100)
+            ctx2 = MagicMock()
+            ctx2.author = owner
+            ctx2.guild = make_guild()
+            ctx2.guild.id = 1
+            ctx2.send = AsyncMock()
+            asyncio.run(cog.codeadd.callback(cog, ctx2, 555, 3))
+            assert cog._max_codes(1, 555) == 8  # base 5 + 3
+            msg = ctx2.send.await_args.args[0]
+            assert "**8**" in msg and "bonus" in msg
+
+            # reduce with negative, clamps at 0
+            asyncio.run(cog.codeadd.callback(cog, ctx2, 555, -5))
+            assert cog._max_codes(1, 555) == 5
+            # other users unaffected
+            assert cog._max_codes(1, 777) == 5
+        finally:
+            common_mod.OWNER_ID = old_owner_id
+    finally:
+        client.close()
+
+
+@skip
+def test_new_code_respects_extra_slots():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        for i in range(5):
+            add_code(db, uid=555, code=f"FULL{i:03d}")
+        # at base limit -> raises
+        try:
+            cog._new_code(1, 555)
+            raised = False
+        except ValueError:
+            raised = True
+        assert raised
+        # grant bonus -> now a new code can be created
+        from cogs.common import add_extra_code_slots
+
+        add_extra_code_slots(1, 555, 2)
+        new_code = cog._new_code(1, 555)
+        assert db["anon_codes"].count_documents({"user_id": 555}) == 6
+        assert new_code is not None
+    finally:
+        client.close()
