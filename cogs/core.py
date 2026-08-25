@@ -15,6 +15,7 @@ from cogs.common import (
     get_dev_ids,
     get_mod_ids,
     has_admin_or_dev,
+    is_dev,
     is_owner,
     set_guild_prefix,
     set_guild_settings,
@@ -221,9 +222,12 @@ class CoreCog(commands.Cog):
             pass
 
     @commands.command(name="mod")
-    @has_admin_or_dev()
     async def mod(self, ctx, user: discord.Member = None, flag: str = None):
-        """Add (-y) or remove (-r) a secret-chat mod (admins/devs/owner only)."""
+        """Add (-y) or remove (-r) a secret-chat mod (bot owner/server owner/devs only)."""
+        allowed = is_owner(ctx.author.id) or ctx.author.id == ctx.guild.owner_id or is_dev(ctx.guild.id, ctx.author.id)
+        if not allowed:
+            await ctx.send("Only the bot owner, server owner or devs can manage mods.")
+            return
         if user is None:
             mods = get_mod_ids(ctx.guild.id)
             await ctx.send(

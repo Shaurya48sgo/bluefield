@@ -634,11 +634,14 @@ class SummonsCog(commands.Cog):
                         pass
             audit(interaction.guild.id, member.id, "easyjoin_leave", "summon", summon_id, doc["name"])
             reply = f"👋 Left **{doc['name']}**!"
-        await self.refresh_member_embed(interaction.guild, doc)
         try:
             await self.update_easyjoin_panel(interaction.guild, summon_id)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"easyjoin panel update failed: {e}")
+        try:
+            await self.refresh_member_embed(interaction.guild, doc)
+        except Exception as e:
+            print(f"member embed refresh failed: {e}")
         await interaction.response.send_message(reply, ephemeral=True)
 
     async def update_easyjoin_panel(self, guild, summon_id):
@@ -789,6 +792,10 @@ class SummonsCog(commands.Cog):
                 guild,
                 f"🔔 {member.mention} summoned **{real_role.name}** ({len(member_ids)} members)",
             )
+            try:
+                await interaction.delete_original_response()
+            except Exception:
+                pass
             return
 
         member_ids = [uid for uid in doc.get("members", []) if guild.get_member(uid)]
@@ -815,6 +822,10 @@ class SummonsCog(commands.Cog):
             guild,
             f"🔔 {member.mention} summoned **{doc['name']}** ({len(member_ids)} members)",
         )
+        try:
+            await interaction.delete_original_response()
+        except Exception:
+            pass
 
     async def _cleanup_pings(self, msgs):
         await asyncio.sleep(60)

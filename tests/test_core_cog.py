@@ -22,6 +22,21 @@ def make_cog(db):
     return cog
 
 
+import contextlib
+
+
+@contextlib.contextmanager
+def bot_owner_uid(uid="100"):
+    from cogs import common
+
+    old = common.OWNER_ID
+    common.OWNER_ID = uid
+    try:
+        yield
+    finally:
+        common.OWNER_ID = old
+
+
 def make_admin(uid=100):
     member = MagicMock()
     member.id = uid
@@ -63,18 +78,33 @@ def make_ctx(author, uid_target=None):
 
 
 @skip
+def test_mod_denied_for_plain_admin():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        ctx, target = make_ctx(make_admin(999), 500)
+        asyncio.run(cog.mod.callback(cog, ctx, target, "-y"))
+        msg = ctx.send.await_args.args[0]
+        assert "server owner or devs" in msg
+        assert db["guild_settings"].find_one({"guild_id": 1}) is None
+    finally:
+        client.close()
+
+
+@skip
 def test_mod_add_remove_updates_setting_and_logs():
     client, db = get_test_db()
     try:
         cog = make_cog(db)
-        ctx, target = make_ctx(make_admin(100), 500)
-        asyncio.run(cog.mod.callback(cog, ctx, target, "-y"))
-        assert db["guild_settings"].find_one({"guild_id": 1})["mod_ids"] == [500]
-        ctx.send.assert_awaited_once()
+        with bot_owner_uid("100"):
+            ctx, target = make_ctx(make_admin(100), 500)
+            asyncio.run(cog.mod.callback(cog, ctx, target, "-y"))
+            assert db["guild_settings"].find_one({"guild_id": 1})["mod_ids"] == [500]
+            ctx.send.assert_awaited_once()
 
-        ctx2, target2 = make_ctx(make_admin(100), 500)
-        asyncio.run(cog.mod.callback(cog, ctx2, target2, "-r"))
-        assert db["guild_settings"].find_one({"guild_id": 1})["mod_ids"] == []
+            ctx2, _target = make_ctx(make_admin(100), 500)
+            asyncio.run(cog.mod.callback(cog, ctx2, _target, "-r"))
+            assert db["guild_settings"].find_one({"guild_id": 1})["mod_ids"] == []
     finally:
         client.close()
 
@@ -84,19 +114,20 @@ def test_mod_duplicate_add_and_remove_missing():
     client, db = get_test_db()
     try:
         cog = make_cog(db)
-        ctx, target = make_ctx(make_admin(100), 500)
-        asyncio.run(cog.mod.callback(cog, ctx, target, "-y"))
-        # duplicate add
-        ctx3, target3 = make_ctx(make_admin(100), 500)
-        asyncio.run(cog.mod.callback(cog, ctx3, target3, "-y"))
-        msg = ctx3.send.await_args.args[0]
-        assert "already a mod" in msg
-        # remove when not a mod
-        db["guild_settings"].update_one({"guild_id": 1}, {"$set": {"mod_ids": []}})
-        ctx4, target4 = make_ctx(make_admin(100), 501)
-        asyncio.run(cog.mod.callback(cog, ctx4, target4, "-r"))
-        msg = ctx4.send.await_args.args[0]
-        assert "not a mod" in msg
+        with bot_owner_uid("100"):
+            ctx, target = make_ctx(make_admin(100), 500)
+            asyncio.run(cog.mod.callback(cog, ctx, target, "-y"))
+            # duplicate add
+            ctx3, target3 = make_ctx(make_admin(100), 500)
+            asyncio.run(cog.mod.callback(cog, ctx3, target3, "-y"))
+            msg = ctx3.send.await_args.args[0]
+            assert "already a mod" in msg
+            # remove when not a mod
+            db["guild_settings"].update_one({"guild_id": 1}, {"$set": {"mod_ids": []}})
+            ctx4, target4 = make_ctx(make_admin(100), 501)
+            asyncio.run(cog.mod.callback(cog, ctx4, target4, "-r"))
+            msg = ctx4.send.await_args.args[0]
+            assert "not a mod" in msg
     finally:
         client.close()
 
@@ -107,8 +138,9 @@ def test_mods_lists_mods():
     try:
         cog = make_cog(db)
         db["guild_settings"].insert_one({"guild_id": 1, "mod_ids": [11, 22]})
-        ctx = make_ctx(make_admin(100))
-        asyncio.run(cog.mods.callback(cog, ctx))
+        with bot_owner_uid("100"):
+            ctx = make_ctx(make_admin(100))
+            asyncio.run(cog.mods.callback(cog, ctx))
         msg = ctx.send.await_args.args[0]
         assert "<@11>" in msg and "<@22>" in msg
     finally:
