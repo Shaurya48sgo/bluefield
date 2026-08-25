@@ -15,8 +15,10 @@ from cogs.common import (
     get_dev_ids,
     get_mod_ids,
     has_admin_or_dev,
+    is_bot_enabled,
     is_dev,
     is_owner,
+    set_bot_enabled,
     set_guild_prefix,
     set_guild_settings,
 )
@@ -294,6 +296,76 @@ class CoreCog(commands.Cog):
         set_guild_settings(ctx.guild.id, report_log_channel_id=ctx.channel.id)
         audit(ctx.guild.id, ctx.author.id, "settings", "guild", ctx.guild.id, f"reports channel -> #{ctx.channel.name}")
         await ctx.send(f"✅ Code reports will be submitted to {ctx.channel.mention}.")
+
+    @commands.command(name="server")
+    @has_admin_or_dev()
+    async def server_cmd(self, ctx, action: str = None):
+        """Bot status in this server; enable/disable the bot here only."""
+        gid = ctx.guild.id
+        settings = get_guild_settings(gid)
+        enabled = not settings.get("bot_disabled", False)
+        if action is None:
+            def ch(key):
+                cid = settings.get(key)
+                return f"<#{cid}>" if cid else "❌ not set"
+            mods = get_mod_ids(gid)
+            devs = get_dev_ids(gid)
+            embed = discord.Embed(
+                title=f"🖥️ Bot status · {ctx.guild.name}",
+                color=discord.Colour(0x57F287) if enabled else discord.Colour(0xED4245),
+                description=(
+                    f"**Status:** {'✅ ENABLED' if enabled else '⛔ DISABLED (only here)'}\n"
+                    f"**Server ID:** `{gid}`\n"
+                    f"**Prefix:** `{get_guild_prefix_sync(gid)}`"
+                ),
+            )
+            embed.add_field(
+                name="Channels",
+                value=(
+                    f"Secret chat: {ch('confess_channel_id')}\n"
+                    f"Activity log: {ch('activity_log_channel_id')}\n"
+                    f"Member lists: {ch('member_log_channel_id')}\n"
+                    f"Mod-log: {ch('mod_log_channel_id')}\n"
+                    f"Reports: {ch('report_log_channel_id')}"
+                ),
+                inline=False,
+            )
+            embed.add_field(
+                name="Staff",
+                value=(
+                    f"Mods: " + (" ".join(f"<@{m}>" for m in mods) if mods else "none") + "\n"
+                    + "Devs: " + (" ".join(f"<@{d}>" for d in devs) if devs else "none")
+                ),
+                inline=False,
+            )
+            embed.add_field(
+                name="Limits",
+                value=(
+                    f"Max groups/member: {settings.get('max_groups_per_member', 3)}\n"
+                    f"Max codes/member: {settings.get('confess_max_codes', 5)}"
+                ),
+                inline=False,
+            )
+            embed.set_footer(text=f"Usage: I?server enable | I?server disable  · affects THIS server only")
+            await ctx.send(embed=embed)
+            return
+        action = action.strip().lower()
+        if action == "disable":
+            if not enabled:
+                await ctx.send("The bot is already disabled in this server.")
+                return
+            set_bot_enabled(gid, False)
+            audit(gid, ctx.author.id, "bot_disable", "guild", gid)
+            await ctx.send("⛔ **Disabled** the bot in this server. Use `I?server enable` to turn it back on.")
+        elif action == "enable":
+            if enabled:
+                await ctx.send("The bot is already enabled in this server.")
+                return
+            set_bot_enabled(gid, True)
+            audit(gid, ctx.author.id, "bot_enable", "guild", gid)
+            await ctx.send("✅ **Enabled** the bot in this server.")
+        else:
+            await ctx.send("Usage: `I?server enable|disable` (no argument shows status).")
 
     @commands.command(name="devhelp")
     @has_admin_or_dev()

@@ -162,3 +162,80 @@ def test_modlog_and_reports_set_channels():
         assert settings["report_log_channel_id"] == 888
     finally:
         client.close()
+
+
+@skip
+def test_server_status_disable_enable():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        with bot_owner_uid("100"):
+            ctx = make_ctx(make_admin(100))
+            asyncio.run(cog.server_cmd.callback(cog, ctx, None))
+            embed = ctx.send.await_args.kwargs["embed"]
+            assert "ENABLED" in embed.description
+
+            ctx2 = make_ctx(make_admin(100))
+            asyncio.run(cog.server_cmd.callback(cog, ctx2, "disable"))
+            assert db["guild_settings"].find_one({"guild_id": 1})["bot_disabled"] is True
+
+            ctx3 = make_ctx(make_admin(100))
+            asyncio.run(cog.server_cmd.callback(cog, ctx3, None))
+            assert "DISABLED" in ctx3.send.await_args.kwargs["embed"].description
+
+            # double disable rejected
+            ctx4 = make_ctx(make_admin(100))
+            asyncio.run(cog.server_cmd.callback(cog, ctx4, "disable"))
+            assert "already" in ctx4.send.await_args.args[0]
+
+            ctx5 = make_ctx(make_admin(100))
+            asyncio.run(cog.server_cmd.callback(cog, ctx5, "enable"))
+            assert "bot_disabled" not in db["guild_settings"].find_one({"guild_id": 1})
+    finally:
+        client.close()
+
+
+@skip
+def test_guild_gate_check_blocks_and_exempts_server_cmd():
+    client, db = get_test_db()
+    try:
+        import main as main_mod
+
+        db.guild_settings.drop()
+        from cogs import common
+
+        common.G = db["guild_settings"]
+
+        disabled_ctx = MagicMock()
+        disabled_ctx.guild.id = 1
+        disabled_ctx.command.name = "help"
+        assert main_mod.is_bot_enabled(1) is True
+        assert asyncio.run(main_mod.guild_gate_check(disabled_ctx)) is True
+
+        common.set_bot_enabled(1, False)
+        assert asyncio.run(main_mod.guild_gate_check(disabled_ctx)) is False
+
+        server_ctx = MagicMock()
+        server_ctx.guild.id = 1
+        server_ctx.command.name = "server"
+        assert asyncio.run(main_mod.guild_gate_check(server_ctx)) is True
+
+        dm_ctx = MagicMock()
+        dm_ctx.guild = None
+        assert asyncio.run(main_mod.guild_gate_check(dm_ctx)) is True
+
+        class FakeInteraction:
+            guild_id = 1
+            response = MagicMock()
+            response.send_message = AsyncMock()
+
+        fi = FakeInteraction()
+        assert asyncio.run(main_mod.tree_interaction_check(fi)) is False
+        fi.response.send_message.assert_awaited_once()
+
+        class FakeDM:
+            guild_id = None
+
+        assert asyncio.run(main_mod.tree_interaction_check(FakeDM())) is True
+    finally:
+        client.close()

@@ -153,6 +153,17 @@ def is_mod(guild_id, user_id):
     return user_id in get_mod_ids(guild_id)
 
 
+def is_bot_enabled(guild_id):
+    return not get_guild_settings(guild_id).get("bot_disabled", False)
+
+
+def set_bot_enabled(guild_id, enabled):
+    if enabled:
+        G.update_one({"guild_id": guild_id}, {"$unset": {"bot_disabled": ""}}, upsert=True)
+    else:
+        G.update_one({"guild_id": guild_id}, {"$set": {"bot_disabled": True}}, upsert=True)
+
+
 def is_staff(member):
     """Admins, devs, mods or the bot owner."""
     if is_owner(member.id):

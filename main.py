@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from cogs.common import M, P, get_prefix
+from cogs.common import M, P, get_prefix, is_bot_enabled
 from cogs.summons import EasyJoinView
 from cogs.confess import SecretReplyView
 
@@ -20,6 +20,45 @@ intents.members = True
 
 bot = commands.Bot(command_prefix=get_prefix, intents=intents)
 bot.remove_command("help")
+
+
+@bot.event
+async def on_command_error(ctx, error):
+    from discord.ext.commands import CheckFailure, CommandNotFound
+
+    if isinstance(error, (CommandNotFound, CheckFailure)):
+        return
+    print(f"Command error: {error}")
+
+
+async def guild_gate_check(ctx):
+    """Block prefix commands in servers where the bot is disabled (I?server stays usable)."""
+    if ctx.guild is None or ctx.command is None:
+        return True
+    if ctx.command.name == "server":
+        return True
+    return is_bot_enabled(ctx.guild.id)
+
+
+bot.check(guild_gate_check)
+
+
+async def tree_interaction_check(interaction):
+    if interaction.guild_id is None:
+        return True
+    enabled = is_bot_enabled(interaction.guild_id)
+    if not enabled:
+        try:
+            await interaction.response.send_message(
+                "⛔ The bot is disabled in this server. An admin can re-enable it with `I?server enable`.",
+                ephemeral=True,
+            )
+        except Exception:
+            pass
+    return enabled
+
+
+bot.tree.interaction_check = tree_interaction_check
 
 
 @bot.event
