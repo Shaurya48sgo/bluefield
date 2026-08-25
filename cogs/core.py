@@ -163,6 +163,8 @@ class CoreCog(commands.Cog):
             return None
         if num <= 0:
             return None
+        if unit == "s":
+            return num
         if unit == "m":
             return num * 60
         if unit == "h":
@@ -249,6 +251,34 @@ class CoreCog(commands.Cog):
             role_txt = role.mention if role else f"`{rid}` *(deleted)*"
             # box them up: each field is a box
             embed.add_field(name=f"[{name}]", value=f"{role_txt}\n`{name}`", inline=True)
+        # Demo for staff (admin/dev/owner) — copy-paste example + duration legend
+        is_staff = False
+        try:
+            is_staff = is_owner(ctx.author.id) or is_dev(ctx.guild.id, ctx.author.id) or is_admin(ctx.author)
+        except Exception:
+            pass
+        if is_staff:
+            bot_mention = self.bot.user.mention if self.bot.user else f"<@{self.bot.user.id if self.bot.user else 'BOT'}>"
+            # use first punishment name as example, title-cased like Jail
+            example_name = sorted(punishments.keys())[0]
+            example_label = example_name.title()
+            embed.add_field(
+                name="📋 Copy-paste demo",
+                value=f"```\nB {example_label} {bot_mention} 1h\n```",
+                inline=False,
+            )
+            embed.add_field(
+                name="⏱️ Duration units",
+                value="```\n"
+                "s = seconds  (30s)\n"
+                "m = minutes  (10m)\n"
+                "h = hours    (2h)\n"
+                "d = days     (1d)\n"
+                "w = weeks    (1w)\n"
+                "max 90d\n"
+                "```",
+                inline=False,
+            )
         embed.set_footer(text=f"{len(punishments)} punishment(s) • I?punishment <role> [name] to add")
         await ctx.send(embed=embed)
 
