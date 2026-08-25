@@ -9,6 +9,7 @@ from cogs.common import (
     G,
     I,
     M,
+    RC,
     RP,
     US,
     audit,
@@ -584,7 +585,89 @@ class ConfessCog(commands.Cog):
         base = get_guild_settings(guild_id).get("confess_max_codes", DEFAULT_MAX_CODES)
         if user_id is None:
             return base
-        return base + get_extra_code_slots(guild_id, user_id)
+        return (
+            base
+            + get_extra_code_slots(guild_id, user_id)
+            + get_extra_code_slots(0, user_id)  # global bonus (vouchers / DM grants)
+        )
+
+    def _staff_uid_authorized(self, user_id):
+        if is_owner(user_id):
+            return True
+        for _gs in G.find({"dev_ids": user_id}):
+            return True
+        return False
+
+    @commands.command(name="codecode")
+    async def codecode(self, ctx, number: int = None):
+        """Create a redeemable bonus-slot voucher code (bot owner/devs). DM only."""
+        if ctx.guild is not None:
+            return
+        if not self._staff_uid_authorized(ctx.author.id):
+            return
+        if number is None or number <= 0:
+            await ctx.send("Usage: `I?codecode <number>` — slots the voucher grants.")
+            return
+        voucher = f"SLOT-{generate_code(8)}"
+        while RC.find_one({"code": voucher}):
+            voucher = f"SLOT-{generate_code(8)}"
+        RC.insert_one(
+            {
+                "code": voucher,
+                "slots": number,
+                "created_by": ctx.author.id,
+                "created_at": datetime.now(timezone.utc),
+                "used_by": None,
+                "used_at": None,
+            }
+        )
+        audit(0, ctx.author.id, "voucher_create", "code", voucher, f"{number} slots")
+        embed = discord.Embed(
+            title="🎟️ Bonus-slot voucher created",
+            color=discord.Colour(0x9B59B6),
+            description=(
+                f"**Voucher:** `{voucher}`\n"
+                f"**Grants:** +{number} secret-code slot(s)\n\n"
+                f"Redeem with `I?codeuse {voucher}` here in DMs."
+            ),
+        )
+        embed.set_footer(text="One-time use · applies to ALL servers")
+        await ctx.send(embed=embed)
+
+    @commands.command(name="codeuse")
+    async def codeuse(self, ctx, code: str = None):
+        """Redeem a bonus-slot voucher code. DM only."""
+        if ctx.guild is not None:
+            return
+        if code is None:
+            await ctx.send("Usage: `I?codeuse <voucher>` — redeem it here in DMs.")
+            return
+        doc = RC.find_one({"code": code.strip().upper()})
+        if not doc:
+            await ctx.send("Invalid or unknown voucher code.")
+            return
+        if doc.get("used_by"):
+            await ctx.send("That voucher has already been used.")
+            return
+        RC.update_one(
+            {"_id": doc["_id"]},
+            {"$set": {"used_by": ctx.author.id, "used_at": datetime.now(timezone.utc)}},
+        )
+        new_total = add_extra_code_slots(0, ctx.author.id, doc["slots"])
+        audit(0, ctx.author.id, "voucher_redeem", "code", doc["code"], f"+{doc['slots']} slots")
+        base_default = DEFAULT_MAX_CODES
+        embed = discord.Embed(
+            title="✅ Voucher redeemed!",
+            color=discord.Colour(0x57F287),
+            description=(
+                f"**+{doc['slots']}** extra secret-code slot(s) added to your account.\n"
+                f"Your total bonus is now **{new_total}** slot(s) — "
+                f"your limit becomes `{base_default}+{new_total}` (or higher where admins raised it) "
+                "in every server."
+            ),
+        )
+        embed.set_footer(text="Thank you for supporting the bot!")
+        await ctx.send(embed=embed)
 
     def _channel(self, guild):
         cid = get_guild_settings(guild.id).get("confess_channel_id")
@@ -602,12 +685,17 @@ class ConfessCog(commands.Cog):
 
     @commands.command(name="codeadd")
     async def codeadd(self, ctx, target: str = None, number: int = None):
-        """Grant extra secret-code slots to a user (bot owner/devs only)."""
-        if not (is_owner(ctx.author.id) or is_dev(ctx.guild.id, ctx.author.id)):
+        """Grant extra secret-code slots to a user (bot owner/devs only). Works in DMs."""
+        gid = ctx.guild.id if ctx.guild else 0
+        allowed = is_owner(ctx.author.id) or (ctx.guild is not None and is_dev(ctx.guild.id, ctx.author.id))
+        if not allowed:
             await ctx.send("Only the bot owner and devs can manage extra code slots.")
             return
         if target is None or number is None:
-            await ctx.send("Usage: `I?codeadd <mention/userid> <number>` (negative number removes)")
+            await ctx.send(
+                "Usage: `I?codeadd <mention/userid> <number>` (negative number removes)\n"
+                + ("Grants apply to ALL servers when used in DMs." if ctx.guild is None else "")
+            )
             return
         raw = str(target).strip()
         if raw.startswith("<@") and raw.endswith(">"):
@@ -619,21 +707,19 @@ class ConfessCog(commands.Cog):
         if number == 0:
             await ctx.send("Number can't be 0.")
             return
-        old = get_extra_code_slots(ctx.guild.id, user_id)
-        new_total = add_extra_code_slots(ctx.guild.id, user_id, number)
-        base = self._max_codes(ctx.guild.id)
-        audit(ctx.guild.id, ctx.author.id, "code_slots", "user", user_id, f"{number:+d} slots -> {new_total}")
-        if number > 0:
-            await ctx.send(
-                f"✅ Granted **{number}** extra code slot(s) to `<@{user_id}>` — "
-                f"their limit here is now **{base + new_total}** ({base} base + {new_total} bonus)."
-            )
-        else:
-            await ctx.send(
-                f"✅ Reduced `<@{user_id}>`'s bonus slots by **{abs(number)}** — "
-                f"their limit here is now **{base + new_total}** ({base} base + {new_total} bonus)."
-                + ("\n⚠️ Existing codes above the limit are untouched." if new_total < old else "")
-            )
+        old = get_extra_code_slots(gid, user_id)
+        new_total = add_extra_code_slots(gid, user_id, number)
+        scope = "ALL servers" if gid == 0 else "this server"
+        audit(gid, ctx.author.id, "code_slots", "user", user_id, f"{number:+d} slots -> {new_total} ({scope})")
+        verb = (
+            f"Granted **{number}** extra code slot(s) to"
+            if number > 0
+            else f"Reduced <@{user_id}>'s bonus slots by **{abs(number)}** for"
+        )
+        await ctx.send(
+            f"✅ {verb} `<@{user_id}>` ({scope}) — total bonus is now **{new_total}** slot(s)."
+            + ("\n⚠️ Existing codes above the limit are untouched." if number < 0 and new_total < old else "")
+        )
 
     @commands.command(name="confessmax")
     @has_admin_or_dev()
@@ -775,9 +861,6 @@ class ConfessCog(commands.Cog):
                 )
                 return
             if target_doc is not None:
-                if target_doc.get("code") == code:
-                    await fail("You can't reply to your own post with the same code.")
-                    return
                 try:
                     original_message = await channel.fetch_message(target_doc["message_id"])
                 except Exception:

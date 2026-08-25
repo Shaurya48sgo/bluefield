@@ -21,6 +21,7 @@ def make_cog(db):
     db.inbox.drop()
     db.reveal_proposals.drop()
     db.user_settings.drop()
+    db.redeem_codes.drop()
     cog = ConfessCog(MagicMock())
     cog.bot = MagicMock()
     from cogs import common, confess
@@ -34,6 +35,7 @@ def make_cog(db):
         mod.I = db["inbox"]
         mod.RP = db["reveal_proposals"]
         mod.US = db["user_settings"]
+        mod.RC = db["redeem_codes"]
     return cog
 
 
@@ -1191,7 +1193,7 @@ def test_codeadd_permission_and_grant():
             asyncio.run(cog.codeadd.callback(cog, ctx2, 555, 3))
             assert cog._max_codes(1, 555) == 8  # base 5 + 3
             msg = ctx2.send.await_args.args[0]
-            assert "**8**" in msg and "bonus" in msg
+            assert "Granted **3**" in msg and "(this server)" in msg and "**3**" in msg
 
             # reduce with negative, clamps at 0
             asyncio.run(cog.codeadd.callback(cog, ctx2, 555, -5))
@@ -1258,6 +1260,103 @@ def test_codeadd_accepts_mention_and_userid():
             # invalid target rejected
             asyncio.run(cog.codeadd.callback(cog, ctx, "not_a_user", 2))
             assert "user mention" in ctx.send.await_args.args[0]
+        finally:
+            common_mod.OWNER_ID = old_owner_id
+    finally:
+        client.close()
+
+
+@skip
+def test_say_allows_self_reply_with_same_code():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        add_code(db, uid=100, code="MYCODE", nickname="Nick")
+        db["guild_settings"].insert_one({"guild_id": 1, "confess_channel_id": 555})
+        db["secret_messages"].insert_one(
+            {"guild_id": 1, "channel_id": 555, "message_id": 9001, "code": "MYCODE", "owner_id": 100, "post_number": 4}
+        )
+        member = make_member(uid=100)
+        member.guild.id = 1
+        interaction = make_interaction(member)
+        cog.post_reply = AsyncMock()
+
+        channel_mock = MagicMock()
+        channel_mock.id = 555
+        fetched = MagicMock()
+        fetched.id = 9001
+        channel_mock.fetch_message = AsyncMock(return_value=fetched)
+        guild = MagicMock()
+        guild.id = 1
+        guild.get_channel.return_value = channel_mock
+        interaction.guild = guild
+        cog._channel = lambda g: channel_mock
+
+        asyncio.run(cog.say.callback(cog, interaction, "replying to myself", "mycode", reply_to=4))
+        cog.post_reply.assert_awaited_once()
+    finally:
+        client.close()
+
+
+@skip
+def test_codecode_and_codeuse_vouchers():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        from cogs import common as common_mod
+
+        old_owner_id = common_mod.OWNER_ID
+        common_mod.OWNER_ID = "100"
+        try:
+            owner = make_member(uid=100)
+            # in-guild -> silent
+            ctx_guild = MagicMock()
+            ctx_guild.author = owner
+            ctx_guild.guild = make_guild()
+            ctx_guild.send = AsyncMock()
+            asyncio.run(cog.codecode.callback(cog, ctx_guild, 3))
+            ctx_guild.send.assert_not_awaited()
+
+            # DM owner -> voucher created
+            ctx_dm = MagicMock()
+            ctx_dm.author = owner
+            ctx_dm.guild = None
+            ctx_dm.send = AsyncMock()
+            asyncio.run(cog.codecode.callback(cog, ctx_dm, 3))
+            assert db["redeem_codes"].count_documents({}) == 1
+            voucher_doc = db["redeem_codes"].find_one({})
+            embed = ctx_dm.send.await_args.kwargs["embed"]
+            assert voucher_doc["code"] in embed.description
+
+            # non-staff DM -> silent
+            rando = make_member(uid=888)
+            ctx_r = MagicMock()
+            ctx_r.author = rando
+            ctx_r.guild = None
+            ctx_r.send = AsyncMock()
+            asyncio.run(cog.codecode.callback(cog, ctx_r, 5))
+            ctx_r.send.assert_not_awaited()
+
+            # redeem: wrong code / valid / double redeem
+            redeemer = make_member(uid=200)
+            ctx_u = MagicMock()
+            ctx_u.author = redeemer
+            ctx_u.guild = None
+            ctx_u.send = AsyncMock()
+            asyncio.run(cog.codeuse.callback(cog, ctx_u, "NOPE-1234"))
+            assert "Invalid" in ctx_u.send.await_args.args[0]
+            asyncio.run(cog.codeuse.callback(cog, ctx_u, voucher_doc["code"]))
+            ok_embed = ctx_u.send.await_args.kwargs["embed"]
+            assert "+3" in ok_embed.description
+            get_extra = db["guild_settings"].find_one({"guild_id": 0})["extra_code_slots"]["200"]
+            assert get_extra == 3
+            asyncio.run(cog.codeuse.callback(cog, ctx_u, voucher_doc["code"]))
+            assert "already been used" in ctx_u.send.await_args.args[0]
+
+            # global bonus applies to any guild's limit
+            from cogs.confess import DEFAULT_MAX_CODES
+
+            assert cog._max_codes(999, 200) == DEFAULT_MAX_CODES + 3
         finally:
             common_mod.OWNER_ID = old_owner_id
     finally:

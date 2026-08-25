@@ -520,7 +520,10 @@ class CoreCog(commands.Cog):
             value=(
                 "`I?hackscheck <code>` — inspect a code\n"
                 "`I?hackssearch <userID|code|nickname>` — search / full user profile by ID\n"
-                "`I?hackslist` — all codes"
+                "`I?hackslist` — all codes\n"
+                "`I?codeadd <mention/userid> <number>` — grant extra code slots (works in DMs = ALL servers)\n"
+                "`I?codecode <number>` — mint a bonus-slot voucher (DM only)\n"
+                "`I?codeuse <voucher>` — redeem a voucher (DM only, anyone)"
             ),
             inline=False,
         )

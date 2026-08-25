@@ -25,6 +25,7 @@ M = _db["secret_messages"]
 I = _db["inbox"]
 RP = _db["reveal_proposals"]
 US = _db["user_settings"]
+RC = _db["redeem_codes"]
 
 PREFIX_CACHE = {}
 
