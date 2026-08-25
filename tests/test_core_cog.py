@@ -11,6 +11,7 @@ skip = pytest.mark.skipif(not mongo_available(), reason="MongoDB not running")
 def make_cog(db):
     db.guild_settings.drop()
     db.audit_log.drop()
+    db.active_punishments.drop()
     from cogs.core import CoreCog
 
     cog = CoreCog(MagicMock())
@@ -19,6 +20,7 @@ def make_cog(db):
     for m in (common, core):
         m.G = db["guild_settings"]
         m.AL = db["audit_log"]
+        m.PS = db["active_punishments"]
     return cog
 
 
@@ -310,5 +312,149 @@ def test_setup_access_predicate_and_denied_granter():
         pctx.author = plain
         pctx.guild = plain.guild
         assert asyncio.run(check.predicate(pctx)) is False
+    finally:
+        client.close()
+
+
+@skip
+def test_punishment_register_list_remove():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        with bot_owner_uid("100"):
+            guild = MagicMock()
+            guild.id = 1
+            author = make_admin(100)
+            role = MagicMock()
+            role.id = 4321
+            role.mention = "<@&4321>"
+            channel = MagicMock()
+            channel.send = AsyncMock()
+            ctx = MagicMock()
+            ctx.author = author
+            ctx.guild = guild
+            ctx.channel = channel
+            ctx.send = AsyncMock()
+            ctx.message.role_mentions = [role]
+
+            asyncio.run(cog.punishment_cmd.callback(cog, ctx, raw="<@&4321> mute"))
+            assert db["guild_settings"].find_one({"guild_id": 1})["punishments"]["mute"] == 4321
+
+            # list
+            ctx2 = MagicMock()
+            ctx2.author = author
+            ctx2.guild = guild
+            ctx2.message.role_mentions = []
+            ctx2.send = AsyncMock()
+            asyncio.run(cog.punishment_cmd.callback(cog, ctx2, raw=None))
+            embed = ctx2.send.await_args.kwargs["embed"]
+            assert "mute" in embed.description
+
+            # remove
+            asyncio.run(cog.punishment_cmd.callback(cog, ctx, raw="-r mute"))
+            assert db["guild_settings"].find_one({"guild_id": 1})["punishments"] == {}
+    finally:
+        client.close()
+
+
+@skip
+def test_smodrole_and_smodlogchannel():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        guild = MagicMock()
+        guild.id = 1
+        author = make_admin(100)
+        role = MagicMock()
+        role.id = 5555
+        role.mention = "<@&5555>"
+        channel = MagicMock()
+        channel.id = 321
+        channel.mention = "<#321>"
+        ctx = MagicMock()
+        ctx.author = author
+        ctx.guild = guild
+        ctx.channel = channel
+        ctx.send = AsyncMock()
+        ctx.message.role_mentions = [role]
+        asyncio.run(cog.smodrole.callback(cog, ctx, raw="@smods"))
+        settings = db["guild_settings"].find_one({"guild_id": 1})
+        assert settings["smod_role_id"] == 5555
+
+        asyncio.run(cog.smodlogchannel.callback(cog, ctx))
+        assert db["guild_settings"].find_one({"guild_id": 1})["mod_log_channel_id"] == 321
+    finally:
+        client.close()
+
+
+@skip
+def test_B_applies_punishment_role_and_logs():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        db["guild_settings"].insert_one(
+            {"guild_id": 1, "punishments": {"mute": 4321}, "mod_log_channel_id": 999, "smod_role_id": 5555}
+        )
+        smod_role = MagicMock()
+        smod_role.id = 5555
+        staff = MagicMock()
+        staff.id = 700
+        perms = MagicMock()
+        perms.administrator = False
+        perms.manage_roles = False
+        staff.guild_permissions = perms
+        staff.roles = [smod_role]
+
+        target_user = MagicMock()
+        target_user.id = 800
+        target_user.mention = "<@800>"
+        target_user.add_roles = AsyncMock()
+        target_top = MagicMock()
+        target_top.position = 1
+        target_user.top_role = target_top
+
+        guild = MagicMock()
+        guild.id = 1
+        me_top = MagicMock()
+        me_top.position = 100
+        guild.me = MagicMock()
+        guild.me.top_role = me_top
+        muted_role = MagicMock()
+        muted_role.id = 4321
+        muted_role.mention = "<@&4321>"
+        def _get_role(rid):
+            return {4321: muted_role, 5555: smod_role}.get(rid)
+        guild.get_role.side_effect = _get_role
+        log_channel = MagicMock()
+        log_channel.send = AsyncMock()
+        guild.get_channel.return_value = log_channel
+
+        ctx = MagicMock()
+        ctx.author = staff
+        ctx.guild = guild
+        ctx.send = AsyncMock()
+
+        asyncio.run(cog.punish_b.callback(cog, ctx, "mute", target_user, "2h"))
+        target_user.add_roles.assert_awaited_once()
+        doc = db["active_punishments"].find_one({"user_id": 800})
+        assert doc is not None and doc["name"] == "mute"
+        log_channel.send.assert_awaited_once()
+        assert "has been given" in ctx.send.await_args.args[0]
+
+        # unknown punishment
+        asyncio.run(cog.punish_b.callback(cog, ctx, "banish", target_user, None))
+        assert "Unknown punishment" in ctx.send.await_args.args[0]
+
+        # unauthorized member (no smod role/admin)
+        plain = MagicMock()
+        plain.id = 900
+        pperms = MagicMock()
+        pperms.administrator = False
+        pperms.manage_roles = False
+        plain.guild_permissions = pperms
+        plain.roles = []
+        ctx.author = plain
+        asyncio.run(cog.punish_b.callback(cog, ctx, "mute", target_user, "1h"))
+        assert "don't have permission" in ctx.send.await_args.args[0]
     finally:
         client.close()

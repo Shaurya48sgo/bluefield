@@ -1,14 +1,16 @@
 import os
 import re
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 from cogs.common import (
     DEFAULT_PREFIX,
     G,
+    PS,
     audit,
     get_guild_prefix_sync,
     get_guild_settings,
@@ -17,8 +19,10 @@ from cogs.common import (
     get_setup_ids,
     has_admin_or_dev,
     has_setup_access,
+    is_admin,
     is_bot_enabled,
     is_dev,
+    is_mod,
     is_owner,
     is_setup,
     set_bot_enabled,
@@ -124,7 +128,7 @@ class HelpView(discord.ui.View):
                     ("/secret code delete <code>", "Delete one of your codes (pick from the list) to free a slot. New codes are generated via `/secret say` or the Reply button."),
                     ("/secret reveal propose <to_code> <your_code> [also_delete]", "Propose mutually revealing identities. If they accept, both of you get DMs showing who's who — optionally deleting both codes (anti-blackmail)."),
                     ("/secret report <code> <reason>", "Report a code to the staff. Anyone can use it; reports go to the reports channel."),
-                    ("/nodm", "Toggle DM pings when someone replies to your posts."),
+                    ("/dms yes|no", "Choose if you get a DM when someone replies to your posts (default ON). `/inbox` shows who replied."),
                     ("/inbox", "DM-only: see who replied to your codes (jump links) + Clear inbox / Clear chat buttons."),
                 ],
             },
@@ -134,6 +138,219 @@ class HelpView(discord.ui.View):
 class CoreCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+
+    async def cog_load(self):
+        self.punishment_loop.start()
+
+    def cog_unload(self):
+        self.punishment_loop.cancel()
+
+    # ---------- punishment system ----------
+
+    def _parse_dur(self, value):
+        value = (value or "").strip().lower()
+        if not value:
+            return None
+        unit = value[-1]
+        try:
+            num = int(value[:-1])
+        except ValueError:
+            return None
+        if num <= 0:
+            return None
+        if unit == "m":
+            return num * 60
+        if unit == "h":
+            return num * 3600
+        if unit == "d":
+            return num * 86400
+        if unit == "w":
+            return num * 7 * 86400
+        return None
+
+    def _can_punish(self, ctx):
+        settings = get_guild_settings(ctx.guild.id)
+        smod = ctx.guild.get_role(settings.get("smod_role_id")) if settings.get("smod_role_id") else None
+        if is_owner(ctx.author.id) or is_dev(ctx.guild.id, ctx.author.id) or is_mod(ctx.guild.id, ctx.author.id):
+            return True
+        if is_admin(ctx.author):
+            return True
+        return bool(smod and smod in getattr(ctx.author, "roles", []))
+
+    @tasks.loop(seconds=45)
+    async def punishment_loop(self):
+        now = datetime.now(timezone.utc)
+        for p in PS.find({"until": {"$lte": now}}).limit(50):
+            guild = self.bot.get_guild(p["guild_id"])
+            if guild:
+                member = guild.get_member(p["user_id"])
+                role = guild.get_role(p["role_id"])
+                if member and role and role in member.roles:
+                    try:
+                        await member.remove_roles(role, reason="Punishment expired")
+                    except Exception:
+                        pass
+                PS.delete_one({"_id": p["_id"]})
+                embed = discord.Embed(
+                    title="⏱️ Punishment expired",
+                    color=discord.Colour(0x99AAB5),
+                    description=(
+                        f"**User:** <@{p['user_id']}>\n"
+                        f"**Punishment:** {p.get('name', '?')}"
+                    ),
+                )
+                await self.send_mod_log(guild, embed)
+
+    @punishment_loop.before_loop
+    async def before_punishment_loop(self):
+        await self.bot.wait_until_ready()
+
+    @commands.command(name="punishment")
+    @has_admin_or_dev()
+    async def punishment_cmd(self, ctx, *, raw: str = None):
+        """Map a role to a punishment name: I?punishment <role> <name> · remove: I?punishment -r <name>."""
+        gid = ctx.guild.id
+        settings = get_guild_settings(gid)
+        punishments = settings.get("punishments", {})
+        if raw is None:
+            if not punishments:
+                await ctx.send("No punishments set. Usage: `I?punishment <role> <name>`")
+                return
+            lines = [f"• **{n}** → <@&{rid}>" for n, rid in sorted(punishments.items())]
+            embed = discord.Embed(
+                title=f"🔨 Punishments ({len(punishments)})",
+                color=discord.Colour(0xED4245),
+                description="\n".join(lines),
+            )
+            embed.set_footer(text=f"Apply with: {get_guild_prefix_sync(gid)}B <punishment> <user> [duration]")
+            await ctx.send(embed=embed)
+            return
+        tokens = raw.strip().split()
+        if tokens[0].lower() in ("-r", "remove"):
+            name = " ".join(tokens[1:]).strip().lower()
+            if not name:
+                await ctx.send("Usage: `I?punishment -r <name>`")
+                return
+            if name not in punishments:
+                await ctx.send(f"No punishment named **{name}**.")
+                return
+            del punishments[name]
+            set_guild_settings(gid, punishments=punishments)
+            audit(gid, ctx.author.id, "punishment_remove", "settings", name)
+            await ctx.send(f"✅ Removed punishment **{name}**.")
+            return
+        role = ctx.message.role_mentions[0] if ctx.message.role_mentions else None
+        name_tokens = []
+        for t in tokens:
+            if t.startswith("<@&") and t.endswith(">") and t[3:-1].isdigit():
+                continue
+            name_tokens.append(t)
+        name = " ".join(name_tokens).strip().lower()
+        if role is None or not name:
+            await ctx.send("Usage: `I?punishment <role> <name>` — e.g. `I?punishment @Muted mute`")
+            return
+        punishments[name] = role.id
+        set_guild_settings(gid, punishments=punishments)
+        audit(gid, ctx.author.id, "punishment_add", "settings", name, f"role {role.id}")
+        embed = discord.Embed(
+            title="🔨 Punishment registered",
+            color=discord.Colour(0x5865F2),
+            description=f"**{name}** → {role.mention}",
+        )
+        await self.send_mod_log(ctx.guild, embed)
+        await ctx.send(f"✅ Punishment **{name}** will apply {role.mention}. Use `B {name} <user> [duration]`.")
+
+    @commands.command(name="smodrole")
+    @has_admin_or_dev()
+    async def smodrole(self, ctx, *, raw: str = None):
+        """Set the staff role allowed to apply punishments."""
+        gid = ctx.guild.id
+        current = get_guild_settings(gid).get("smod_role_id")
+        if raw is None or not ctx.message.role_mentions:
+            cur_txt = f"<@&{current}>" if current else "not set"
+            await ctx.send(f"SMod role: {cur_txt}\nUsage: `I?smodrole <role>`")
+            return
+        role = ctx.message.role_mentions[0]
+        set_guild_settings(gid, smod_role_id=role.id)
+        audit(gid, ctx.author.id, "smod_role", "settings", role.id)
+        await ctx.send(f"✅ SMod role set to {role.mention} — members with it can now use `B`.")
+
+    @commands.command(name="smodlogchannel")
+    @has_setup_access()
+    async def smodlogchannel(self, ctx):
+        """Make the current channel the punishment/mod-log channel."""
+        set_guild_settings(ctx.guild.id, mod_log_channel_id=ctx.channel.id)
+        audit(ctx.guild.id, ctx.author.id, "settings", "guild", ctx.guild.id, f"smod log channel -> #{ctx.channel.name}")
+        await ctx.send(f"✅ Punishment logs will go to {ctx.channel.mention}.")
+
+    @commands.command(name="B")
+    async def punish_b(self, ctx, punishment: str = None, user: discord.Member = None, duration: str = None):
+        """Apply a punishment role: B <punishment> <user> [duration e.g. 30m 2h 1d 1w]"""
+        if ctx.guild is None:
+            return
+        gid = ctx.guild.id
+        if not self._can_punish(ctx):
+            await ctx.send("You don't have permission to punish here.")
+            return
+        settings = get_guild_settings(gid)
+        punishments = settings.get("punishments", {})
+        if punishment is None or user is None:
+            names = ", ".join(f"**{n}**" for n in sorted(punishments)) or "none set"
+            await ctx.send(
+                f"Punishments: {names}\nUsage: `B <punishment> <user> [duration]` — e.g. `B mute @user 2h`"
+            )
+            return
+        key = punishment.strip().lower()
+        role_id = punishments.get(key)
+        if not role_id:
+            await ctx.send(f"Unknown punishment **{key}**. Set one up with `I?punishment <role> <name>`.")
+            return
+        role = ctx.guild.get_role(role_id)
+        if role is None:
+            await ctx.send(f"The role for **{key}** no longer exists. Re-register it.")
+            return
+        me_top_pos = getattr(ctx.guild.me.top_role, "position", 0) if ctx.guild.me else 0
+        user_top = getattr(user, "top_role", None)
+        user_top_pos = getattr(user_top, "position", 0)
+        if user_top_pos >= me_top_pos and me_top_pos > 0 and not is_owner(user.id):
+            await ctx.send("I can't punish someone with a role equal/higher than mine.")
+            return
+        seconds = self._parse_dur(duration) if duration else 3600
+        if seconds is None:
+            await ctx.send("Invalid duration. Use e.g. `30m`, `2h`, `1d`, `1w`.")
+            return
+        seconds = min(seconds, 90 * 86400)
+        try:
+            await user.add_roles(role, reason=f"Punishment '{key}' by {ctx.author}")
+        except Exception as e:
+            await ctx.send(f"Failed to add the role: {e}")
+            return
+        until = datetime.now(timezone.utc) + timedelta(seconds=seconds)
+        PS.update_one(
+            {"guild_id": gid, "user_id": user.id, "role_id": role.id},
+            {
+                "$set": {
+                    "name": key,
+                    "until": until,
+                    "by": ctx.author.id,
+                    "applied_at": datetime.now(timezone.utc),
+                }
+            },
+            upsert=True,
+        )
+        audit(gid, ctx.author.id, "punish", "user", user.id, f"{key} for {duration or '1h'}")
+        embed = discord.Embed(
+            title="🔨 Punishment applied",
+            color=discord.Colour(0xED4245),
+            description=(
+                f"**User:** {user.mention}\n"
+                f"**Punishment:** {key} ({role.mention})\n"
+                f"**Duration:** {duration or '1h'} (until <t:{int(until.timestamp())}:f>)\n"
+                f"**By:** {ctx.author.mention}"
+            ),
+        )
+        await self.send_mod_log(ctx.guild, embed)
+        await ctx.send(f"🔨 {user.mention} has been given **{key}** for **{duration or '1h'}**.")
 
     @commands.Cog.listener()
     async def on_message(self, message):

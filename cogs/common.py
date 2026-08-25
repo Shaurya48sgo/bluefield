@@ -26,6 +26,7 @@ I = _db["inbox"]
 RP = _db["reveal_proposals"]
 US = _db["user_settings"]
 RC = _db["redeem_codes"]
+PS = _db["active_punishments"]
 
 PREFIX_CACHE = {}
 

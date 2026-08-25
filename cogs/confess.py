@@ -898,7 +898,7 @@ class ConfessCog(commands.Cog):
                 f"[Jump to the reply]({link})"
             ),
         )
-        embed.set_footer(text="Do /nodm to turn off these pings · /inbox to check who pinged you")
+        embed.set_footer(text="Do /dms no to turn off these pings · /inbox to check who pinged you")
         try:
             await user.send(embed=embed)
         except Exception:
@@ -1584,26 +1584,45 @@ class ConfessCog(commands.Cog):
             shown += 1
         await ctx.send(embed=embed)
 
-    # ---------- slash: /inbox ----------
+    # ---------- slash: /dms ----------
 
-    @app_commands.command(name="nodm")
-    async def nodm(self, interaction):
-        """Toggle DM pings when someone replies to your secret posts."""
+    @app_commands.command(name="dms")
+    @app_commands.describe(setting="yes = get a DM when someone replies to your posts (default), no = silent")
+    @app_commands.choices(
+        setting=[
+            app_commands.Choice(name="yes — DM me on replies", value="yes"),
+            app_commands.Choice(name="no — don't DM me", value="no"),
+        ]
+    )
+    async def dms(self, interaction, setting: str = None):
+        """Choose whether you get a DM when someone replies to your secret posts."""
         uid = interaction.user.id
-        enabled = bool(US.find_one({"user_id": uid}) and US.find_one({"user_id": uid}).get("nodm"))
-        if enabled:
+        currently_on = not bool(US.find_one({"user_id": uid}) and US.find_one({"user_id": uid}).get("nodm"))
+        if setting is None:
+            state = "🔔 **ON**" if currently_on else "🔕 **OFF**"
+            await interaction.response.send_message(
+                f"Reply DMs are {state} (default is ON).\n"
+                "Use `/dms yes` or `/dms no` to change it. `/inbox` always shows who replied.",
+                ephemeral=True,
+            )
+            return
+        setting = setting.strip().lower()
+        if setting in ("yes", "on", "true"):
             US.update_one({"user_id": uid}, {"$unset": {"nodm": ""}}, upsert=True)
             await interaction.response.send_message(
-                "🔔 Reply pings **ON** — you'll get a DM when someone replies to your posts.\n"
-                "Run `/nodm` again to turn them off.",
+                "🔔 Reply DMs **ON** — you'll get a DM whenever someone replies to one of your posts.\n"
+                "Change anytime with `/dms no` · check history with `/inbox`.",
+                ephemeral=True,
+            )
+        elif setting in ("no", "off", "false"):
+            US.update_one({"user_id": uid}, {"$set": {"nodm": True}}, upsert=True)
+            await interaction.response.send_message(
+                "🔕 Reply DMs **OFF** — no more reply notifications. Replies still land in `/inbox`.\n"
+                "Turn back on anytime with `/dms yes`.",
                 ephemeral=True,
             )
         else:
-            US.update_one({"user_id": uid}, {"$set": {"nodm": True}}, upsert=True)
-            await interaction.response.send_message(
-                "🔕 Reply pings **OFF** — no more reply DMs. Your replies still land in `/inbox`.",
-                ephemeral=True,
-            )
+            await interaction.response.send_message("Use `/dms yes` or `/dms no`.", ephemeral=True)
 
     @app_commands.command(name="inbox")
     async def inbox(self, interaction):

@@ -1066,17 +1066,21 @@ def test_hacks_profile_numeric_query():
 
 
 @skip
-def test_nodm_toggles():
+def test_dms_command_yes_no_status():
     client, db = get_test_db()
     try:
         cog = make_cog(db)
         member = make_member(uid=100)
         interaction = make_interaction(member)
-        asyncio.run(cog.nodm.callback(cog, interaction))
+        # default status
+        asyncio.run(cog.dms.callback(cog, interaction, None))
+        assert "ON" in interaction.response.send_message.await_args.args[0]
+        # turn off
+        asyncio.run(cog.dms.callback(cog, interaction, "no"))
         assert db["user_settings"].find_one({"user_id": 100})["nodm"] is True
-        msg = interaction.response.send_message.await_args.args[0]
-        assert "OFF" in msg
-        asyncio.run(cog.nodm.callback(cog, interaction))
+        assert "OFF" in interaction.response.send_message.await_args.args[0]
+        # turn on
+        asyncio.run(cog.dms.callback(cog, interaction, "yes"))
         assert "nodm" not in db["user_settings"].find_one({"user_id": 100})
         assert "ON" in interaction.response.send_message.await_args.args[0]
     finally:
@@ -1136,7 +1140,7 @@ def test_post_reply_dms_target_and_respects_nodm():
         target_user.send.assert_awaited_once()
         dm_embed = target_user.send.await_args.kwargs["embed"]
         assert "got a reply" in dm_embed.title
-        assert "/nodm" in dm_embed.footer.text
+        assert "/dms" in dm_embed.footer.text
 
         # now enable nodm -> no DM on second reply
         db["user_settings"].insert_one({"user_id": 200, "nodm": True})
