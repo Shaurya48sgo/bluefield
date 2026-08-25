@@ -396,6 +396,73 @@ class CoreCog(commands.Cog):
         audit(ctx.guild.id, ctx.author.id, "settings", "guild", ctx.guild.id, f"smod log channel -> #{ctx.channel.name}")
         await ctx.send(f"✅ Punishment logs will go to {ctx.channel.mention}.")
 
+    class PunishmentReportView(discord.ui.View):
+        def __init__(self, cog, guild_id: int, punishment: str, target_id: int):
+            super().__init__(timeout=60 * 60 * 24 * 7)
+            self.cog = cog
+            self.guild_id = guild_id
+            self.punishment = punishment
+            self.target_id = target_id
+
+        @discord.ui.button(label="Report / Appeal", style=discord.ButtonStyle.danger, emoji="🚩")
+        async def report_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+            if interaction.user.id != self.target_id:
+                await interaction.response.send_message("This button is not for you.", ephemeral=True)
+                return
+            await interaction.response.send_modal(
+                CoreCog.PunishmentAppealModal(self.cog, self.guild_id, self.punishment)
+            )
+
+    class PunishmentAppealModal(discord.ui.Modal, title="Report / Appeal Punishment"):
+        reason = discord.ui.TextInput(label="Reason for appeal", style=discord.TextStyle.paragraph, max_length=1000, required=True, placeholder="Explain why this punishment is unfair...")
+
+        def __init__(self, cog, guild_id: int, punishment: str):
+            super().__init__()
+            self.cog = cog
+            self.guild_id = guild_id
+            self.punishment = punishment
+
+        async def on_submit(self, interaction: discord.Interaction):
+            guild = self.cog.bot.get_guild(self.guild_id)
+            if guild is None:
+                await interaction.response.send_message("Guild not found.", ephemeral=True)
+                return
+            embed = discord.Embed(
+                title="🚩 Punishment Report / Appeal",
+                color=discord.Colour.orange(),
+                description=(
+                    f"**Punishment:** {self.punishment}\n"
+                    f"**From:** {interaction.user.mention} (`{interaction.user.id}`)\n"
+                    f"**Guild:** {guild.name} (`{guild.id}`)\n"
+                    f"**Reason:** {self.reason.value}"
+                ),
+            )
+            embed.set_footer(text=f"Appeal by {interaction.user} • {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
+            await self.cog.send_mod_log(guild, embed)
+            audit(self.guild_id, interaction.user.id, "punishment_appeal", "punishment", self.punishment, self.reason.value[:200])
+            await interaction.response.send_message("✅ Your report has been sent to the mods.", ephemeral=True)
+
+    async def _dm_punished(self, guild: discord.Guild, user: discord.Member, punishment: str, role: discord.Role, duration: str, until: datetime, punisher: discord.Member | discord.User, reason: str = None):
+        desc = (
+            f"You have been given punishment **{punishment}** in **{guild.name}**\n"
+            f"**Role:** {role.mention}\n"
+            f"**Duration:** {duration} (until <t:{int(until.timestamp())}:f>)\n"
+            f"**By:** {punisher.mention if hasattr(punisher, 'mention') else str(punisher)}"
+        )
+        if reason:
+            desc += f"\n**Reason:** {reason}"
+        embed = discord.Embed(
+            title="🔨 You have been punished",
+            color=discord.Colour(0xED4245),
+            description=desc,
+        )
+        embed.set_footer(text="If you think this is unfair, use the button below to report.")
+        view = self.PunishmentReportView(self, guild.id, punishment, user.id)
+        try:
+            await user.send(embed=embed, view=view)
+        except Exception:
+            pass
+
     @commands.command(name="B")
     async def punish_b(self, ctx, punishment: str = None, user: discord.Member = None, duration: str = None):
         """Apply a punishment role: B <punishment> <user> [duration e.g. 30m 2h 1d 1w]"""
@@ -463,6 +530,7 @@ class CoreCog(commands.Cog):
             ),
         )
         await self.send_mod_log(ctx.guild, embed)
+        await self._dm_punished(ctx.guild, user, key, role, duration or "1h", until, ctx.author)
         await ctx.send(f"🔨 {user.mention} has been given **{key}** for **{duration or '1h'}**.")
 
     @app_commands.command(name="punish", description="Apply a punishment role to a user")
@@ -545,6 +613,7 @@ class CoreCog(commands.Cog):
             ),
         )
         await self.send_mod_log(interaction.guild, embed)
+        await self._dm_punished(interaction.guild, user, key, role, duration or "1h", until, interaction.user, reason)
         await interaction.response.send_message(f"🔨 {user.mention} has been given **{key}** for **{duration or '1h'}**." + (f" Reason: {reason}" if reason else ""))
 
     @commands.Cog.listener()
@@ -714,6 +783,14 @@ class CoreCog(commands.Cog):
         set_guild_settings(ctx.guild.id, report_log_channel_id=ctx.channel.id)
         audit(ctx.guild.id, ctx.author.id, "settings", "guild", ctx.guild.id, f"reports channel -> #{ctx.channel.name}")
         await ctx.send(f"✅ Code reports will be submitted to {ctx.channel.mention}.")
+
+    @commands.command(name="setupreport")
+    @has_setup_access()
+    async def setupreport(self, ctx):
+        """Alias to setup reports channel — same as I?reports."""
+        set_guild_settings(ctx.guild.id, report_log_channel_id=ctx.channel.id)
+        audit(ctx.guild.id, ctx.author.id, "settings", "guild", ctx.guild.id, f"reports channel -> #{ctx.channel.name}")
+        await ctx.send(f"✅ Reports channel set to {ctx.channel.mention}. (`I?reports` / `I?setupreport`)")
 
     @commands.command(name="server")
     async def server_cmd(self, ctx, action: str = None, flag: str = None):
