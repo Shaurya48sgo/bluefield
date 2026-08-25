@@ -116,10 +116,11 @@ class HelpView(discord.ui.View):
                     (f"{self.prefix}reports", "Run IN a channel to make it the code-reports channel."),
                     (f"{self.prefix}server", "Bot status here · `I?server enable|disable` (this server only) · `I?server <@user> -y|-r` grants channel-setup power."),
                     (f"{self.prefix}codeadd <mention/userid> <number>", "Grant (or remove with a negative number) extra secret-code slots for a user (bot owner/devs only)."),
-                    (f"{self.prefix}punishment <role> <name>", "Register a punishment role. Remove: `I?punishment -r <name>`."),
+                    (f"{self.prefix}punishment <role> <name>", "Register a punishment role. Remove: `I?punishment -r <name>`. Brackets/spaces auto-fixed."),
+                    (f"{self.prefix}punishroles", "List all punishment roles boxed up (`[name]` → @Role)."),
                     (f"{self.prefix}smodrole <role>", "Set the SMod role allowed to use `B` punishments."),
                     (f"{self.prefix}smodlogchannel", "Run IN a channel to make it the punishment/mod-log channel."),
-                    (f"B <punishment> <user> [duration]", "Apply a punishment role, e.g. `B mute @user 2h` (SMods/admins/devs/mods)."),
+                    (f"B <punishment> <user> [duration]", "Apply a punishment role, e.g. `B mute @user 2h` (SMods/admins/devs/mods). Brackets/spaces auto-fixed: `[jail]`/`[ jail]` → jail."),
                     (f"{self.prefix}devhelp", "DM you the full staff guide: channel setup + admin/dev commands."),
                     (f"{self.prefix}suspend <code> <duration>", "Suspend a code, e.g. `30m`, `2h`, `1w` (admins/devs/mods)."),
                     (f"{self.prefix}unsuspend <code>", "Remove a suspension (admins/devs/mods)."),
@@ -209,6 +210,48 @@ class CoreCog(commands.Cog):
     async def before_punishment_loop(self):
         await self.bot.wait_until_ready()
 
+    def _norm_punishment_name(self, name: str) -> str:
+        name = name.strip().lower()
+        # strip outer brackets like [jail] / [ jail ] / [ jail]
+        while True:
+            stripped = name.strip()
+            changed = False
+            if stripped.startswith("["):
+                stripped = stripped[1:].strip()
+                changed = True
+            if stripped.endswith("]"):
+                stripped = stripped[:-1].strip()
+                changed = True
+            if not changed:
+                break
+            name = stripped
+            if not name:
+                break
+        name = " ".join(name.split())
+        return name
+
+    @commands.command(name="punishroles")
+    async def punishroles(self, ctx):
+        """List all punishment roles boxed up."""
+        if ctx.guild is None:
+            await ctx.send("Use this in a server.")
+            return
+        punishments = get_guild_settings(ctx.guild.id).get("punishments", {})
+        if not punishments:
+            await ctx.send("No punishments registered. Add one with `I?punishment <role> [name]`.")
+            return
+        embed = discord.Embed(
+            title=f"🔨 Punishment roles — {ctx.guild.name}",
+            color=discord.Colour(0xED4245),
+        )
+        for name, rid in sorted(punishments.items()):
+            role = ctx.guild.get_role(rid)
+            role_txt = role.mention if role else f"`{rid}` *(deleted)*"
+            # box them up: each field is a box
+            embed.add_field(name=f"[{name}]", value=f"{role_txt}\n`{name}`", inline=True)
+        embed.set_footer(text=f"{len(punishments)} punishment(s) • I?punishment <role> [name] to add")
+        await ctx.send(embed=embed)
+
     @commands.command(name="punishment")
     @has_admin_or_dev()
     async def punishment_cmd(self, ctx, *, raw: str = None):
@@ -231,7 +274,7 @@ class CoreCog(commands.Cog):
             return
         tokens = raw.strip().split()
         if tokens[0].lower() in ("-r", "remove"):
-            name = " ".join(tokens[1:]).strip().lower()
+            name = self._norm_punishment_name(" ".join(tokens[1:]))
             if not name:
                 await ctx.send("Usage: `I?punishment -r <name>`")
                 return
@@ -249,9 +292,9 @@ class CoreCog(commands.Cog):
             if t.startswith("<@&") and t.endswith(">") and t[3:-1].isdigit():
                 continue
             name_tokens.append(t)
-        name = " ".join(name_tokens).strip().lower()
+        name = self._norm_punishment_name(" ".join(name_tokens))
         if role is None or not name:
-            await ctx.send("Usage: `I?punishment <role> <name>` — e.g. `I?punishment @Muted mute`")
+            await ctx.send("Usage: `I?punishment <role> <name>` — e.g. `I?punishment @Muted mute` — brackets like `[jail]` are optional")
             return
         punishments[name] = role.id
         set_guild_settings(gid, punishments=punishments)
@@ -304,10 +347,10 @@ class CoreCog(commands.Cog):
                 f"Punishments: {names}\nUsage: `B <punishment> <user> [duration]` — e.g. `B mute @user 2h`"
             )
             return
-        key = punishment.strip().lower()
+        key = self._norm_punishment_name(punishment)
         role_id = punishments.get(key)
         if not role_id:
-            await ctx.send(f"Unknown punishment **{key}**. Set one up with `I?punishment <role> <name>`.")
+            await ctx.send(f"Unknown punishment **{key}**. Set one up with `I?punishment <role> [name]` — try `I?punishroles` to see what's available.")
             return
         role = ctx.guild.get_role(role_id)
         if role is None:
@@ -723,8 +766,9 @@ class CoreCog(commands.Cog):
         cmds.add_field(
             name="Punishments",
             value=(
-                f"`{prefix}punishment <role> <name>` — register (e.g. `I?punishment @Muted mute`)\n"
+                f"`{prefix}punishment <role> <name>` — register (e.g. `I?punishment @Muted mute`, `[jail]`/`[ jail]` auto-fixed)\n"
                 f"`{prefix}punishment -r <name>` — remove a punishment\n"
+                f"`{prefix}punishroles` — list all punishment roles boxed up\n"
                 f"`B <punishment> <user> [duration]` — apply, e.g. `B mute @user 2h` (30m/2h/1d/1w, max 90d)\n"
                 "`SMods`/admins/devs/mods can use `B` — auto-removes when it expires"
             ),
