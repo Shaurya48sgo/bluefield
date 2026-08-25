@@ -1309,13 +1309,13 @@ def test_codecode_and_codeuse_vouchers():
         common_mod.OWNER_ID = "100"
         try:
             owner = make_member(uid=100)
-            # in-guild -> silent
+            # in-guild -> points them to DMs
             ctx_guild = MagicMock()
             ctx_guild.author = owner
             ctx_guild.guild = make_guild()
             ctx_guild.send = AsyncMock()
             asyncio.run(cog.codecode.callback(cog, ctx_guild, 3))
-            ctx_guild.send.assert_not_awaited()
+            assert "DMs" in ctx_guild.send.await_args.args[0]
 
             # DM owner -> voucher created
             ctx_dm = MagicMock()

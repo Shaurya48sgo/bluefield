@@ -602,8 +602,11 @@ class ConfessCog(commands.Cog):
     async def codecode(self, ctx, number: int = None):
         """Create a redeemable bonus-slot voucher code (bot owner/devs). DM only."""
         if ctx.guild is not None:
+            if self._staff_uid_authorized(ctx.author.id):
+                await ctx.send("📩 This only works in my **DMs** — open my profile and message me.")
             return
         if not self._staff_uid_authorized(ctx.author.id):
+            await ctx.send("Only the bot owner and devs can create vouchers.")
             return
         if number is None or number <= 0:
             await ctx.send("Usage: `I?codecode <number>` — slots the voucher grants.")
@@ -638,6 +641,7 @@ class ConfessCog(commands.Cog):
     async def codeuse(self, ctx, code: str = None):
         """Redeem a bonus-slot voucher code. DM only."""
         if ctx.guild is not None:
+            await ctx.send("📩 Vouchers are redeemed in my **DMs** — open my profile and message me.")
             return
         if code is None:
             await ctx.send("Usage: `I?codeuse <voucher>` — redeem it here in DMs.")
