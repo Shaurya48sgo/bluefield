@@ -1227,3 +1227,38 @@ def test_new_code_respects_extra_slots():
         assert new_code is not None
     finally:
         client.close()
+
+
+@skip
+def test_codeadd_accepts_mention_and_userid():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        from cogs import common as common_mod
+
+        old_owner_id = common_mod.OWNER_ID
+        common_mod.OWNER_ID = "100"
+        try:
+            owner = make_member(uid=100)
+            ctx = MagicMock()
+            ctx.author = owner
+            ctx.guild = make_guild()
+            ctx.guild.id = 1
+            ctx.send = AsyncMock()
+
+            asyncio.run(cog.codeadd.callback(cog, ctx, "<@555>", 2))
+            assert cog._max_codes(1, 555) == 7
+
+            asyncio.run(cog.codeadd.callback(cog, ctx, "<@!555>", -1))
+            assert cog._max_codes(1, 555) == 6
+
+            asyncio.run(cog.codeadd.callback(cog, ctx, "555", 1))
+            assert cog._max_codes(1, 555) == 7
+
+            # invalid target rejected
+            asyncio.run(cog.codeadd.callback(cog, ctx, "not_a_user", 2))
+            assert "user mention" in ctx.send.await_args.args[0]
+        finally:
+            common_mod.OWNER_ID = old_owner_id
+    finally:
+        client.close()

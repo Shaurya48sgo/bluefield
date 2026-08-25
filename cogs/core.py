@@ -111,7 +111,7 @@ class HelpView(discord.ui.View):
                     (f"{self.prefix}modlog", "Run IN a channel to make it the mod-log channel."),
                     (f"{self.prefix}reports", "Run IN a channel to make it the code-reports channel."),
                     (f"{self.prefix}server", "Bot status here · `I?server enable|disable` (this server only) · `I?server <@user> -y|-r` grants channel-setup power."),
-                    (f"{self.prefix}codeadd <userid> <number>", "Grant (or remove with a negative number) extra secret-code slots for a user (bot owner/devs only)."),
+                    (f"{self.prefix}codeadd <mention/userid> <number>", "Grant (or remove with a negative number) extra secret-code slots for a user (bot owner/devs only)."),
                     (f"{self.prefix}devhelp", "DM you the full staff guide: channel setup + admin/dev commands."),
                     (f"{self.prefix}suspend <code> <duration>", "Suspend a code, e.g. `30m`, `2h`, `1w` (admins/devs/mods)."),
                     (f"{self.prefix}unsuspend <code>", "Remove a suspension (admins/devs/mods)."),
@@ -506,7 +506,7 @@ class CoreCog(commands.Cog):
             name="Settings & tools",
             value=(
                 f"`{prefix}groupmax <n>` / `{prefix}confessmax <n>` — limits per member\n"
-                f"`{prefix}codeadd <userid> <number>` — grant extra code slots (owner/devs)\n"
+                f"`{prefix}codeadd <mention/userid> <number>` — grant extra code slots (owner/devs)\n"
                 f"`{prefix}purge` — clean stale summon entries\n"
                 f"`{prefix}audit` — recent admin actions\n"
                 f"`{prefix}layout` — preview secret post layout (owner)\n"

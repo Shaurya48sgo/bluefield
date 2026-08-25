@@ -601,14 +601,21 @@ class ConfessCog(commands.Cog):
         await ctx.send(f"✅ Anonymous chat channel set to {ctx.channel.mention}.")
 
     @commands.command(name="codeadd")
-    async def codeadd(self, ctx, user_id: int = None, number: int = None):
+    async def codeadd(self, ctx, target: str = None, number: int = None):
         """Grant extra secret-code slots to a user (bot owner/devs only)."""
         if not (is_owner(ctx.author.id) or is_dev(ctx.guild.id, ctx.author.id)):
             await ctx.send("Only the bot owner and devs can manage extra code slots.")
             return
-        if user_id is None or number is None:
-            await ctx.send("Usage: `I?codeadd <userid> <number>` (negative number removes)")
+        if target is None or number is None:
+            await ctx.send("Usage: `I?codeadd <mention/userid> <number>` (negative number removes)")
             return
+        raw = str(target).strip()
+        if raw.startswith("<@") and raw.endswith(">"):
+            raw = raw[2:-1].lstrip("!")
+        if not raw.isdigit():
+            await ctx.send("Pass a valid **user mention** or **user ID**.")
+            return
+        user_id = int(raw)
         if number == 0:
             await ctx.send("Number can't be 0.")
             return
