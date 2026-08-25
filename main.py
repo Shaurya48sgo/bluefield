@@ -23,6 +23,16 @@ bot.remove_command("help")
 
 
 @bot.event
+async def on_guild_join(guild):
+    print(f"Joined new guild: {guild.name} ({guild.id})")
+    try:
+        await bot.tree.sync(guild=guild)
+        print(f"Synced commands for {guild.name}")
+    except Exception as e:
+        print(f"Failed to sync for {guild.name}: {e}")
+
+
+@bot.event
 async def on_ready():
     print(f"{bot.user} is ready!")
     try:

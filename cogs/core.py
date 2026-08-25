@@ -105,6 +105,7 @@ class HelpView(discord.ui.View):
                     (f"{self.prefix}mods", "List this server's mods."),
                     (f"{self.prefix}modlog", "Run IN a channel to make it the mod-log channel."),
                     (f"{self.prefix}reports", "Run IN a channel to make it the code-reports channel."),
+                    (f"{self.prefix}devhelp", "DM you the full staff guide: channel setup + admin/dev commands."),
                     (f"{self.prefix}suspend <code> <duration>", "Suspend a code, e.g. `30m`, `2h`, `1w` (admins/devs/mods)."),
                     (f"{self.prefix}unsuspend <code>", "Remove a suspension (admins/devs/mods)."),
                 ],
@@ -293,6 +294,95 @@ class CoreCog(commands.Cog):
         set_guild_settings(ctx.guild.id, report_log_channel_id=ctx.channel.id)
         audit(ctx.guild.id, ctx.author.id, "settings", "guild", ctx.guild.id, f"reports channel -> #{ctx.channel.name}")
         await ctx.send(f"✅ Code reports will be submitted to {ctx.channel.mention}.")
+
+    @commands.command(name="devhelp")
+    @has_admin_or_dev()
+    async def devhelp(self, ctx):
+        """DM staff the channel setup guide + admin/dev commands."""
+        prefix = get_guild_prefix_sync(ctx.guild.id)
+        setup = discord.Embed(
+            title="🛠️ Bluefield · channel setup",
+            color=discord.Colour(0x5865F2),
+            description=(
+                "Run each command **inside the channel** you want to use for it.\n"
+                f"(Your prefix here is `{prefix}` — shown as `I?` below.)"
+            ),
+        )
+        setup.add_field(
+            name="1 · I?confesschannel",
+            value="Anonymous secret-chat channel. `/secret say` posts and replies land here.",
+            inline=False,
+        )
+        setup.add_field(
+            name="2 · I?activitychannel",
+            value="Summon activity log — joins, leaves, summons, easyjoin events.",
+            inline=False,
+        )
+        setup.add_field(
+            name="3 · I?memberchannel",
+            value="Live member lists — auto-updating member embeds per group.",
+            inline=False,
+        )
+        setup.add_field(
+            name="4 · I?modlog",
+            value="Mod-log — suspends (red), unsuspends (green), mod add/remove (blurple).",
+            inline=False,
+        )
+        setup.add_field(
+            name="5 · I?reports",
+            value="Code-reports — `/secret report` submissions land here with Suspend/Dismiss buttons.",
+            inline=False,
+        )
+        setup.add_field(
+            name="Permissions tip",
+            value="Give the bot View + Send Messages (+ Embed Links) in every channel above.",
+            inline=False,
+        )
+        cmds = discord.Embed(title="🛡️ Admin & dev commands", color=discord.Colour(0x9B59B6))
+        cmds.add_field(
+            name="Staff management",
+            value=(
+                f"`{prefix}mod <@user> -y|-r` — add/remove a mod (bot owner, server owner, devs)\n"
+                f"`{prefix}mods` — list mods\n"
+                f"`{prefix}dev <@user> -y|-r` — add/remove a dev"
+            ),
+            inline=False,
+        )
+        cmds.add_field(
+            name="Secret-chat moderation",
+            value=(
+                f"`{prefix}suspend <code> <duration>` — e.g. `30m`, `2h`, `1w`\n"
+                f"`{prefix}unsuspend <code>` — lift a suspension\n"
+                "`Report buttons` — Suspend 1h / 24h / Dismiss right on the report embed"
+            ),
+            inline=False,
+        )
+        cmds.add_field(
+            name="Settings & tools",
+            value=(
+                f"`{prefix}groupmax <n>` / `{prefix}confessmax <n>` — limits per member\n"
+                f"`{prefix}purge` — clean stale summon entries\n"
+                f"`{prefix}audit` — recent admin actions\n"
+                f"`{prefix}layout` — preview secret post layout (owner)\n"
+                f"`{prefix}colors` — DM every embed colour (owner)\n"
+                f"`{prefix}prefix_now <prefix>` — change prefix (owner)"
+            ),
+            inline=False,
+        )
+        cmds.add_field(
+            name="Owner-only hacks (DM the bot)",
+            value=(
+                "`I?hackscheck <code>` — inspect a code\n"
+                "`I?hackssearch <userID|code|nickname>` — search / full user profile by ID\n"
+                "`I?hackslist` — all codes"
+            ),
+            inline=False,
+        )
+        try:
+            await ctx.author.send(embeds=[setup, cmds])
+            await ctx.send("📩 DM'd you the staff guide (channel setup + commands).")
+        except discord.Forbidden:
+            await ctx.send("I can't DM you — enable **Allow direct messages from server members**.")
 
     @commands.command(name="activitychannel")
     @has_admin_or_dev()
