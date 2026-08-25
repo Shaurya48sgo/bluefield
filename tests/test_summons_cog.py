@@ -1028,3 +1028,47 @@ def test_easyjoin_view_has_join_leave_members_close():
         assert custom_ids == ["easyjoin_join", "easyjoin_leave", "easyjoin_members", "easyjoin_expire"]
     finally:
         client.close()
+
+
+@skip
+def test_easyjoin_toggle_updates_panel_embed():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        doc = make_summon(name="LiveGroup", members=[42], canjoin="anyone")
+        res = db["summon_roles"].insert_one(doc)
+        sid = str(res.inserted_id)
+
+        class FakeMessage:
+            id = 777
+
+            def __init__(self):
+                self.edit = AsyncMock()
+
+        panel_msg = FakeMessage()
+        channel = MagicMock()
+        channel.id = 555
+        channel.fetch_message = AsyncMock(return_value=panel_msg)
+        guild = make_guild()
+        guild.get_channel.side_effect = lambda cid: channel if cid == 555 else None
+        member_mock = MagicMock()
+        member_mock.mention = "<@42>"
+        guild.get_member.side_effect = lambda uid: member_mock
+
+        db["easyjoin_panels"].insert_one(
+            {"guild_id": 1, "summon_id": sid, "channel_id": 555, "message_id": 777, "created_by": 42}
+        )
+
+        joiner = make_member(uid=43)
+        interaction = make_interaction(joiner, guild=guild)
+        asyncio.run(cog.easyjoin_toggle(interaction, sid, join=True))
+        # DB updated
+        assert 43 in db["summon_roles"].find_one({"_id": res.inserted_id})["members"]
+        # panel message embed edited with new count
+        panel_msg.edit.assert_awaited_once()
+        new_embed = panel_msg.edit.await_args.kwargs["embed"]
+        assert "**2**" in new_embed.description
+        # ephemeral confirmation sent
+        assert interaction.response.send_message.await_args.kwargs.get("ephemeral") is True
+    finally:
+        client.close()
