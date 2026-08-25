@@ -132,7 +132,7 @@ class HelpView(discord.ui.View):
                     ("/secret code delete <code>", "Delete one of your codes (pick from the list) to free a slot. New codes are generated via `/secret say` or the Reply button."),
                     ("/secret reveal propose <to_code> <your_code> [also_delete]", "Propose mutually revealing identities. If they accept, both of you get DMs showing who's who — optionally deleting both codes (anti-blackmail)."),
                     ("/secret report <code> <reason>", "Report a code to the staff. Anyone can use it; reports go to the reports channel."),
-                    ("/dms yes|no", "Choose if you get a DM when someone replies to your posts (default ON). `/inbox` shows who replied."),
+                    ("/dm on|off", "Choose if you get a DM when someone replies to your posts (default ON). `/inbox` shows who replied."),
                     ("/inbox", "DM-only: see who replied to your codes (jump links) + Clear inbox / Clear chat buttons."),
                 ],
             },

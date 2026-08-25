@@ -898,7 +898,7 @@ class ConfessCog(commands.Cog):
                 f"[Jump to the reply]({link})"
             ),
         )
-        embed.set_footer(text="Do /dms no to turn off these pings · /inbox to check who pinged you")
+        embed.set_footer(text="Do /dm off to turn off these pings · /inbox to check who pinged you")
         try:
             await user.send(embed=embed)
         except Exception:
@@ -1584,17 +1584,17 @@ class ConfessCog(commands.Cog):
             shown += 1
         await ctx.send(embed=embed)
 
-    # ---------- slash: /dms ----------
+    # ---------- slash: /dm ----------
 
-    @app_commands.command(name="dms")
-    @app_commands.describe(setting="yes = get a DM when someone replies to your posts (default), no = silent")
+    @app_commands.command(name="dm")
+    @app_commands.describe(setting="on = get a DM when someone replies to your posts (default), off = silent")
     @app_commands.choices(
         setting=[
-            app_commands.Choice(name="yes — DM me on replies", value="yes"),
-            app_commands.Choice(name="no — don't DM me", value="no"),
+            app_commands.Choice(name="on — DM me on replies", value="on"),
+            app_commands.Choice(name="off — don't DM me", value="off"),
         ]
     )
-    async def dms(self, interaction, setting: str = None):
+    async def dm(self, interaction, setting: str = None):
         """Choose whether you get a DM when someone replies to your secret posts."""
         uid = interaction.user.id
         currently_on = not bool(US.find_one({"user_id": uid}) and US.find_one({"user_id": uid}).get("nodm"))
@@ -1602,7 +1602,7 @@ class ConfessCog(commands.Cog):
             state = "🔔 **ON**" if currently_on else "🔕 **OFF**"
             await interaction.response.send_message(
                 f"Reply DMs are {state} (default is ON).\n"
-                "Use `/dms yes` or `/dms no` to change it. `/inbox` always shows who replied.",
+                "Use `/dm on` or `/dm off` to change it. `/inbox` always shows who replied.",
                 ephemeral=True,
             )
             return
@@ -1611,18 +1611,18 @@ class ConfessCog(commands.Cog):
             US.update_one({"user_id": uid}, {"$unset": {"nodm": ""}}, upsert=True)
             await interaction.response.send_message(
                 "🔔 Reply DMs **ON** — you'll get a DM whenever someone replies to one of your posts.\n"
-                "Change anytime with `/dms no` · check history with `/inbox`.",
+                "Change anytime with `/dm off` · check history with `/inbox`.",
                 ephemeral=True,
             )
         elif setting in ("no", "off", "false"):
             US.update_one({"user_id": uid}, {"$set": {"nodm": True}}, upsert=True)
             await interaction.response.send_message(
                 "🔕 Reply DMs **OFF** — no more reply notifications. Replies still land in `/inbox`.\n"
-                "Turn back on anytime with `/dms yes`.",
+                "Turn back on anytime with `/dm on`.",
                 ephemeral=True,
             )
         else:
-            await interaction.response.send_message("Use `/dms yes` or `/dms no`.", ephemeral=True)
+            await interaction.response.send_message("Use `/dm on` or `/dm off`.", ephemeral=True)
 
     @app_commands.command(name="inbox")
     async def inbox(self, interaction):
