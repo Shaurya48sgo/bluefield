@@ -116,6 +116,10 @@ class HelpView(discord.ui.View):
                     (f"{self.prefix}reports", "Run IN a channel to make it the code-reports channel."),
                     (f"{self.prefix}server", "Bot status here · `I?server enable|disable` (this server only) · `I?server <@user> -y|-r` grants channel-setup power."),
                     (f"{self.prefix}codeadd <mention/userid> <number>", "Grant (or remove with a negative number) extra secret-code slots for a user (bot owner/devs only)."),
+                    (f"{self.prefix}punishment <role> <name>", "Register a punishment role. Remove: `I?punishment -r <name>`."),
+                    (f"{self.prefix}smodrole <role>", "Set the SMod role allowed to use `B` punishments."),
+                    (f"{self.prefix}smodlogchannel", "Run IN a channel to make it the punishment/mod-log channel."),
+                    (f"B <punishment> <user> [duration]", "Apply a punishment role, e.g. `B mute @user 2h` (SMods/admins/devs/mods)."),
                     (f"{self.prefix}devhelp", "DM you the full staff guide: channel setup + admin/dev commands."),
                     (f"{self.prefix}suspend <code> <duration>", "Suspend a code, e.g. `30m`, `2h`, `1w` (admins/devs/mods)."),
                     (f"{self.prefix}unsuspend <code>", "Remove a suspension (admins/devs/mods)."),
@@ -694,6 +698,11 @@ class CoreCog(commands.Cog):
             inline=False,
         )
         setup.add_field(
+            name="6 · I?smodlogchannel",
+            value="Punishment/mod-log — `B` punishments and expiries land here (also `I?modlog`).",
+            inline=False,
+        )
+        setup.add_field(
             name="Permissions tip",
             value="Give the bot View + Send Messages (+ Embed Links) in every channel above.",
             inline=False,
@@ -706,7 +715,18 @@ class CoreCog(commands.Cog):
                 f"`{prefix}mod <@user> -y|-r` — add/remove a mod (bot owner, server owner, devs)\n"
                 f"`{prefix}mods` — list mods\n"
                 f"`{prefix}dev <@user> -y|-r` — add/remove a dev\n"
-                f"`{prefix}server enable|disable` — toggle the bot in this server (admins/devs)"
+                f"`{prefix}server enable|disable` — toggle the bot in this server (admins/devs)\n"
+                f"`{prefix}smodrole <role>` — set the SMod role for `B` punishments"
+            ),
+            inline=False,
+        )
+        cmds.add_field(
+            name="Punishments",
+            value=(
+                f"`{prefix}punishment <role> <name>` — register (e.g. `I?punishment @Muted mute`)\n"
+                f"`{prefix}punishment -r <name>` — remove a punishment\n"
+                f"`B <punishment> <user> [duration]` — apply, e.g. `B mute @user 2h` (30m/2h/1d/1w, max 90d)\n"
+                "`SMods`/admins/devs/mods can use `B` — auto-removes when it expires"
             ),
             inline=False,
         )
