@@ -20,6 +20,7 @@ def make_cog(db):
     db.secret_messages.drop()
     db.inbox.drop()
     db.reveal_proposals.drop()
+    db.user_settings.drop()
     cog = ConfessCog(MagicMock())
     cog.bot = MagicMock()
     from cogs import common, confess
@@ -32,6 +33,7 @@ def make_cog(db):
         mod.M = db["secret_messages"]
         mod.I = db["inbox"]
         mod.RP = db["reveal_proposals"]
+        mod.US = db["user_settings"]
     return cog
 
 
@@ -1057,5 +1059,102 @@ def test_hacks_profile_numeric_query():
         assert any("PROFCODE" in n for n in field_names)
         assert any("suspension" in n for n in field_names)
         assert any("Recent posts" in n for n in field_names)
+    finally:
+        client.close()
+
+
+@skip
+def test_nodm_toggles():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        member = make_member(uid=100)
+        interaction = make_interaction(member)
+        asyncio.run(cog.nodm.callback(cog, interaction))
+        assert db["user_settings"].find_one({"user_id": 100})["nodm"] is True
+        msg = interaction.response.send_message.await_args.args[0]
+        assert "OFF" in msg
+        asyncio.run(cog.nodm.callback(cog, interaction))
+        assert "nodm" not in db["user_settings"].find_one({"user_id": 100})
+        assert "ON" in interaction.response.send_message.await_args.args[0]
+    finally:
+        client.close()
+
+
+@skip
+def test_say_invalid_reply_to_fails():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        add_code(db, uid=100, code="MYCODE", nickname="Nick")
+        db["guild_settings"].insert_one({"guild_id": 1, "confess_channel_id": 555})
+        member = make_member(uid=100)
+        member.guild.id = 1
+        interaction = make_interaction(member)
+        asyncio.run(cog.say.callback(cog, interaction, "hello world", "mycode", reply_to=99))
+        embed = interaction.response.send_message.await_args.kwargs["embed"]
+        assert "#99" in embed.description
+    finally:
+        client.close()
+
+
+@skip
+def test_post_reply_dms_target_and_respects_nodm():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        add_code(db, uid=200, code="TARGETCODE", nickname="TargetNick")
+        target_user = MagicMock()
+        target_user.send = AsyncMock()
+        cog.bot.get_user = MagicMock(return_value=target_user)
+
+        channel = MagicMock()
+        channel.id = 555
+        sent_msg = MagicMock()
+        sent_msg.id = 424242
+        channel.send = AsyncMock(return_value=sent_msg)
+        guild = MagicMock()
+        guild.id = 1
+        guild.get_channel.return_value = channel
+
+        replier = make_member(uid=100)
+        replier.guild = guild
+        interaction = MagicMock()
+        interaction.user = replier
+        interaction.guild = guild
+        interaction.response.send_message = AsyncMock()
+        original_message = MagicMock()
+        original_message.id = 111222
+
+        asyncio.run(
+            cog.post_reply(interaction, 1, 555, "TARGETCODE", "MYCODE", "hey there friend", original_message)
+        )
+        # inbox entry created + DM sent
+        assert db["inbox"].count_documents({"user_id": 200}) == 1
+        target_user.send.assert_awaited_once()
+        dm_embed = target_user.send.await_args.kwargs["embed"]
+        assert "got a reply" in dm_embed.title
+        assert "/nodm" in dm_embed.footer.text
+
+        # now enable nodm -> no DM on second reply
+        db["user_settings"].insert_one({"user_id": 200, "nodm": True})
+        await_count_before = target_user.send.await_count
+        asyncio.run(
+            cog.post_reply(interaction, 1, 555, "TARGETCODE", "MYCODE", "second reply here", original_message)
+        )
+        assert target_user.send.await_count == await_count_before
+
+        # self-reply never DMs
+        db["user_settings"].delete_many({})
+        self_replier = make_member(uid=200)
+        self_replier.guild = guild
+        interaction2 = MagicMock()
+        interaction2.user = self_replier
+        interaction2.guild = guild
+        interaction2.response.send_message = AsyncMock()
+        asyncio.run(
+            cog.post_reply(interaction2, 1, 555, "TARGETCODE", "MYCODE2", "replying to myself", None)
+        )
+        assert target_user.send.await_count == await_count_before
     finally:
         client.close()

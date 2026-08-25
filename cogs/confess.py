@@ -10,6 +10,7 @@ from cogs.common import (
     I,
     M,
     RP,
+    US,
     audit,
     generate_code,
     get_guild_settings,
@@ -204,13 +205,14 @@ class InboxView(discord.ui.View):
 
 
 class NewSecretModal(discord.ui.Modal):
-    def __init__(self, cog, interaction, guild_id, code, message, default_nick):
+    def __init__(self, cog, interaction, guild_id, code, message, default_nick, reply_to=None):
         super().__init__(title="Your new code")
         self.cog = cog
         self.interaction = interaction
         self.guild_id = guild_id
         self.code = code
         self.message = message
+        self.reply_to = reply_to
         example = random_nickname()
         self.nick_input = discord.ui.TextInput(
             label="Nickname (e.g. " + example + ")",
@@ -232,19 +234,21 @@ class NewSecretModal(discord.ui.Modal):
             description="Select the color for this code's messages (a color is pre-selected).",
         )
         await interaction.response.send_message(
-            embed=embed, view=ColorPickView(self.cog, interaction, self.guild_id, self.code, self.message),
+            embed=embed,
+            view=ColorPickView(self.cog, interaction, self.guild_id, self.code, self.message, reply_to=self.reply_to),
             ephemeral=True,
         )
 
 
 class ColorPickView(discord.ui.View):
-    def __init__(self, cog, interaction, guild_id, code, message):
+    def __init__(self, cog, interaction, guild_id, code, message, reply_to=None):
         super().__init__(timeout=300)
         self.cog = cog
         self.interaction = interaction
         self.guild_id = guild_id
         self.code = code
         self.message = message
+        self.reply_to = reply_to
         options = []
         first = True
         for name, value in SECRET_COLORS.items():
@@ -265,6 +269,21 @@ class ColorPickView(discord.ui.View):
     async def on_color(self, interaction):
         color_value = int(self.color_select.values[0])
         C.update_one({"code": self.code, "user_id": interaction.user.id}, {"$set": {"color": color_value}})
+        if self.reply_to is not None:
+            channel = self.cog._channel(interaction.guild)
+            target_doc = M.find_one({"guild_id": self.guild_id, "post_number": self.reply_to})
+            if not target_doc or channel is None:
+                await interaction.response.send_message("The post you were replying to no longer exists.", ephemeral=True)
+                return
+            try:
+                original_message = await channel.fetch_message(target_doc["message_id"])
+            except Exception:
+                await interaction.response.send_message("The post you were replying to was deleted.", ephemeral=True)
+                return
+            await self.cog.post_reply(
+                interaction, self.guild_id, channel.id, target_doc["code"], self.code, self.message, original_message
+            )
+            return
         await self.cog._post_secret(interaction, self.guild_id, self.code, self.message, color_value)
 
 
@@ -652,9 +671,13 @@ class ConfessCog(commands.Cog):
         return out
 
     @secret.command(name="say")
-    @app_commands.describe(message="The message to post anonymously", code="Pick one of your codes, or 'Generate new'")
+    @app_commands.describe(
+        message="The message to post anonymously",
+        code="Pick one of your codes, or 'Generate new'",
+        reply_to="Post number of the secret you're replying to (optional)",
+    )
     @app_commands.autocomplete(code=code_autocomplete)
-    async def say(self, interaction, message: str, code: str):
+    async def say(self, interaction, message: str, code: str, reply_to: int = None):
         """Post anonymously using a code (or generate a new one)."""
         async def fail(text):
             embed = discord.Embed(color=discord.Colour(0xED4245), description=text)
@@ -679,6 +702,13 @@ class ConfessCog(commands.Cog):
         limit = self._max_codes(gid)
         docs = list(C.find({"user_id": uid}).sort("created_at", 1))
 
+        target_doc = None
+        if reply_to is not None:
+            target_doc = M.find_one({"guild_id": gid, "post_number": reply_to})
+            if not target_doc:
+                await fail(f"No post **#{reply_to}** exists here.")
+                return
+
         code = code.strip().upper()
         if code == "GENERATE_NEW":
             if len(docs) >= limit:
@@ -690,7 +720,7 @@ class ConfessCog(commands.Cog):
             code = self._new_code(gid, uid)
             docs = list(C.find({"user_id": uid}).sort("created_at", 1))
             code_doc = C.find_one({"code": code, "user_id": uid})
-            modal = NewSecretModal(self, interaction, gid, code, message, code_doc.get("nickname"))
+            modal = NewSecretModal(self, interaction, gid, code, message, code_doc.get("nickname"), reply_to=reply_to)
             await interaction.response.send_modal(modal)
             return
         else:
@@ -704,7 +734,48 @@ class ConfessCog(commands.Cog):
                     f"⛔ This code is **suspended** until {until.strftime('%Y-%m-%d %H:%M UTC')}."
                 )
                 return
+            if target_doc is not None:
+                if target_doc.get("code") == code:
+                    await fail("You can't reply to your own post with the same code.")
+                    return
+                try:
+                    original_message = await channel.fetch_message(target_doc["message_id"])
+                except Exception:
+                    await fail(f"Post **#{reply_to}** no longer exists.")
+                    return
+                await self.post_reply(
+                    interaction, gid, channel.id, target_doc["code"], code, message, original_message
+                )
+                return
             await self._post_secret(interaction, gid, code, message, color=code_doc.get("color"))
+
+    def _nodm_enabled(self, user_id):
+        doc = US.find_one({"user_id": user_id})
+        return bool(doc and doc.get("nodm"))
+
+    async def _dm_reply_notice(self, target_user_id, replier_code, reply_post, text, link):
+        if self._nodm_enabled(target_user_id):
+            return
+        user = self.bot.get_user(target_user_id)
+        if user is None:
+            try:
+                user = await self.bot.fetch_user(target_user_id)
+            except Exception:
+                return
+        preview = (text[:180] + "…") if len(text) > 180 else text
+        embed = discord.Embed(
+            title="💬 Your secret got a reply",
+            color=discord.Colour(0x5865F2),
+            description=(
+                f"Post **#{reply_post}** from code **`{replier_code}`**:\n\n{preview}\n\n"
+                f"[Jump to the reply]({link})"
+            ),
+        )
+        embed.set_footer(text="Do /nodm to turn off these pings · /inbox to check who pinged you")
+        try:
+            await user.send(embed=embed)
+        except Exception:
+            pass
 
     async def post_reply(self, interaction, guild_id, channel_id, original_code, code, text, original_message=None):
         target_post = None
@@ -765,6 +836,8 @@ class ConfessCog(commands.Cog):
                     "created_at": datetime.now(timezone.utc),
                 }
             )
+            if owner["user_id"] != interaction.user.id and link is not None:
+                await self._dm_reply_notice(owner["user_id"], code, reply_post, text, link)
         audit(guild_id, interaction.user.id, "secret_reply", "code", code)
         await interaction.response.send_message("Reply posted.", ephemeral=True)
 
@@ -1385,6 +1458,25 @@ class ConfessCog(commands.Cog):
         await ctx.send(embed=embed)
 
     # ---------- slash: /inbox ----------
+
+    @app_commands.command(name="nodm")
+    async def nodm(self, interaction):
+        """Toggle DM pings when someone replies to your secret posts."""
+        uid = interaction.user.id
+        enabled = bool(US.find_one({"user_id": uid}) and US.find_one({"user_id": uid}).get("nodm"))
+        if enabled:
+            US.update_one({"user_id": uid}, {"$unset": {"nodm": ""}}, upsert=True)
+            await interaction.response.send_message(
+                "🔔 Reply pings **ON** — you'll get a DM when someone replies to your posts.\n"
+                "Run `/nodm` again to turn them off.",
+                ephemeral=True,
+            )
+        else:
+            US.update_one({"user_id": uid}, {"$set": {"nodm": True}}, upsert=True)
+            await interaction.response.send_message(
+                "🔕 Reply pings **OFF** — no more reply DMs. Your replies still land in `/inbox`.",
+                ephemeral=True,
+            )
 
     @app_commands.command(name="inbox")
     async def inbox(self, interaction):

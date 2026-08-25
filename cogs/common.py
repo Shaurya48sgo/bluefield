@@ -24,6 +24,7 @@ P = _db["easyjoin_panels"]
 M = _db["secret_messages"]
 I = _db["inbox"]
 RP = _db["reveal_proposals"]
+US = _db["user_settings"]
 
 PREFIX_CACHE = {}
 

@@ -119,11 +119,12 @@ class HelpView(discord.ui.View):
             {
                 "title": "🕶️ Anonymous chat",
                 "fields": [
-                    ("/secret say <message> [code]", "Post an anonymous message. Codes have a Reply button; replies land in your /inbox."),
+                    ("/secret say <message> [code] [reply_to]", "Post an anonymous message. Add reply_to:<post number> to reply directly to a post — the author gets a DM. Codes have a Reply button; replies land in your /inbox."),
                     ("/secret code delete <code>", "Delete one of your codes (pick from the list) to free a slot. New codes are generated via `/secret say` or the Reply button."),
                     ("/secret reveal propose <to_code> <your_code> [also_delete]", "Propose mutually revealing identities. If they accept, both of you get DMs showing who's who — optionally deleting both codes (anti-blackmail)."),
                     ("/secret report <code> <reason>", "Report a code to the staff. Anyone can use it; reports go to the reports channel."),
-                    ("/inbox", "DM-only: see where your codes were mentioned (jump links) + Clear inbox / Clear chat buttons."),
+                    ("/nodm", "Toggle DM pings when someone replies to your posts."),
+                    ("/inbox", "DM-only: see who replied to your codes (jump links) + Clear inbox / Clear chat buttons."),
                 ],
             },
         ]
