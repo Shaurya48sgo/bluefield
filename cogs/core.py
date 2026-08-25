@@ -121,6 +121,7 @@ class HelpView(discord.ui.View):
                     (f"{self.prefix}smodrole <role>", "Set the SMod role allowed to use `B` punishments."),
                     (f"{self.prefix}smodlogchannel", "Run IN a channel to make it the punishment/mod-log channel."),
                     (f"B <punishment> <user> [duration]", "Apply a punishment role, e.g. `B mute @user 2h` (SMods/admins/devs/mods). Brackets/spaces auto-fixed: `[jail]`/`[ jail]` → jail."),
+                    ("/punish <punishment> <user> [duration] [reason]", "Slash: apply a punishment role with optional reason. Admins + SMod role can use it."),
                     (f"{self.prefix}devhelp", "DM you the full staff guide: channel setup + admin/dev commands."),
                     (f"{self.prefix}suspend <code> <duration>", "Suspend a code, e.g. `30m`, `2h`, `1w` (admins/devs/mods)."),
                     (f"{self.prefix}unsuspend <code>", "Remove a suspension (admins/devs/mods)."),
@@ -183,6 +184,41 @@ class CoreCog(commands.Cog):
         if is_admin(ctx.author):
             return True
         return bool(smod and smod in getattr(ctx.author, "roles", []))
+
+    def _can_punish_interaction(self, interaction: discord.Interaction) -> bool:
+        if interaction.guild is None:
+            return False
+        gid = interaction.guild.id
+        settings = get_guild_settings(gid)
+        smod = interaction.guild.get_role(settings.get("smod_role_id")) if settings.get("smod_role_id") else None
+        uid = interaction.user.id
+        if is_owner(uid) or is_dev(gid, uid) or is_mod(gid, uid):
+            return True
+        # interaction.user may be Member with guild_permissions
+        try:
+            if is_admin(interaction.user):
+                return True
+        except Exception:
+            pass
+        member = interaction.guild.get_member(uid)
+        roles = getattr(member or interaction.user, "roles", [])
+        return bool(smod and smod in roles)
+
+    async def punish_autocomplete(self, interaction: discord.Interaction, current: str):
+        gid = interaction.guild_id
+        if gid is None:
+            return []
+        punishments = get_guild_settings(gid).get("punishments", {})
+        current = current.lower().strip()
+        # also normalize current bracket/space so [ ja matches jail
+        current_norm = self._norm_punishment_name(current) if current else ""
+        choices = []
+        for name in sorted(punishments.keys()):
+            if not current or current_norm in name or current in name:
+                choices.append(app_commands.Choice(name=name, value=name))
+            if len(choices) >= 25:
+                break
+        return choices
 
     @tasks.loop(seconds=45)
     async def punishment_loop(self):
@@ -428,6 +464,88 @@ class CoreCog(commands.Cog):
         )
         await self.send_mod_log(ctx.guild, embed)
         await ctx.send(f"🔨 {user.mention} has been given **{key}** for **{duration or '1h'}**.")
+
+    @app_commands.command(name="punish", description="Apply a punishment role to a user")
+    @app_commands.describe(
+        punishment="Punishment name (use I?punishroles to see available)",
+        user="User to punish",
+        duration="Duration e.g. 30s 10m 2h 1d 1w (default 1h, max 90d)",
+        reason="Reason for punishment (optional)",
+    )
+    @app_commands.autocomplete(punishment=punish_autocomplete)
+    async def punish_slash(
+        self,
+        interaction: discord.Interaction,
+        punishment: str,
+        user: discord.Member,
+        duration: str = None,
+        reason: str = None,
+    ):
+        """Apply a punishment role via slash — admins and SMod role can use it."""
+        if interaction.guild is None:
+            await interaction.response.send_message("Use this in a server.", ephemeral=True)
+            return
+        if not self._can_punish_interaction(interaction):
+            await interaction.response.send_message("You don't have permission to punish here.", ephemeral=True)
+            return
+        gid = interaction.guild.id
+        punishments = get_guild_settings(gid).get("punishments", {})
+        key = self._norm_punishment_name(punishment)
+        role_id = punishments.get(key)
+        if not role_id:
+            await interaction.response.send_message(
+                f"Unknown punishment **{key}**. Try `/punish` autocomplete or `I?punishroles` to see what's available.",
+                ephemeral=True,
+            )
+            return
+        role = interaction.guild.get_role(role_id)
+        if role is None:
+            await interaction.response.send_message(f"The role for **{key}** no longer exists. Re-register it.", ephemeral=True)
+            return
+        me_top_pos = getattr(interaction.guild.me.top_role, "position", 0) if interaction.guild.me else 0
+        user_top = getattr(user, "top_role", None)
+        user_top_pos = getattr(user_top, "position", 0)
+        if user_top_pos >= me_top_pos and me_top_pos > 0 and not is_owner(user.id):
+            await interaction.response.send_message("I can't punish someone with a role equal/higher than mine.", ephemeral=True)
+            return
+        seconds = self._parse_dur(duration) if duration else 3600
+        if seconds is None:
+            await interaction.response.send_message("Invalid duration. Use e.g. `30s`, `10m`, `2h`, `1d`, `1w`.", ephemeral=True)
+            return
+        seconds = min(seconds, 90 * 86400)
+        try:
+            await user.add_roles(role, reason=f"Punishment '{key}' by {interaction.user}" + (f": {reason}" if reason else ""))
+        except Exception as e:
+            await interaction.response.send_message(f"Failed to add the role: {e}", ephemeral=True)
+            return
+        until = datetime.now(timezone.utc) + timedelta(seconds=seconds)
+        PS.update_one(
+            {"guild_id": gid, "user_id": user.id, "role_id": role.id},
+            {
+                "$set": {
+                    "name": key,
+                    "until": until,
+                    "by": interaction.user.id,
+                    "reason": reason or "",
+                    "applied_at": datetime.now(timezone.utc),
+                }
+            },
+            upsert=True,
+        )
+        audit(gid, interaction.user.id, "punish", "user", user.id, f"{key} for {duration or '1h'}" + (f" reason: {reason}" if reason else ""))
+        embed = discord.Embed(
+            title="🔨 Punishment applied",
+            color=discord.Colour(0xED4245),
+            description=(
+                f"**User:** {user.mention}\n"
+                f"**Punishment:** {key} ({role.mention})\n"
+                f"**Duration:** {duration or '1h'} (until <t:{int(until.timestamp())}:f>)\n"
+                f"**By:** {interaction.user.mention}"
+                + (f"\n**Reason:** {reason}" if reason else "")
+            ),
+        )
+        await self.send_mod_log(interaction.guild, embed)
+        await interaction.response.send_message(f"🔨 {user.mention} has been given **{key}** for **{duration or '1h'}**." + (f" Reason: {reason}" if reason else ""))
 
     @commands.Cog.listener()
     async def on_message(self, message):
