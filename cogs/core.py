@@ -31,6 +31,7 @@ from cogs.common import (
 )
 
 OWNER_ID = os.getenv("OWNER_ID")
+PUNISH_ENABLED = False  # punishment system temporarily disabled
 
 
 class HelpView(discord.ui.View):
@@ -146,10 +147,14 @@ class CoreCog(commands.Cog):
         self.bot = bot
 
     async def cog_load(self):
-        self.punishment_loop.start()
+        if PUNISH_ENABLED:
+            self.punishment_loop.start()
 
     def cog_unload(self):
-        self.punishment_loop.cancel()
+        try:
+            self.punishment_loop.cancel()
+        except Exception:
+            pass
 
     # ---------- punishment system ----------
 
@@ -222,6 +227,8 @@ class CoreCog(commands.Cog):
 
     @tasks.loop(seconds=45)
     async def punishment_loop(self):
+        if not PUNISH_ENABLED:
+            return
         now = datetime.now(timezone.utc)
         for p in PS.find({"until": {"$lte": now}}).limit(50):
             guild = self.bot.get_guild(p["guild_id"])
@@ -250,6 +257,8 @@ class CoreCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member):
+        if not PUNISH_ENABLED:
+            return
         if before.guild is None or before.roles == after.roles:
             return
         gid = before.guild.id
@@ -331,6 +340,9 @@ class CoreCog(commands.Cog):
     @commands.command(name="punishroles")
     async def punishroles(self, ctx):
         """List all punishment roles boxed up."""
+        if not PUNISH_ENABLED:
+            await ctx.send("Punishment system is currently disabled.")
+            return
         if ctx.guild is None:
             await ctx.send("Use this in a server.")
             return
@@ -382,6 +394,9 @@ class CoreCog(commands.Cog):
     @has_admin_or_dev()
     async def punishment_cmd(self, ctx, *, raw: str = None):
         """Map a role to a punishment name: I?punishment <role> <name> · remove: I?punishment -r <name>."""
+        if not PUNISH_ENABLED:
+            await ctx.send("Punishment system is currently disabled.")
+            return
         gid = ctx.guild.id
         settings = get_guild_settings(gid)
         punishments = settings.get("punishments", {})
@@ -437,6 +452,9 @@ class CoreCog(commands.Cog):
     @has_admin_or_dev()
     async def smodrole(self, ctx, *, raw: str = None):
         """Set the staff role allowed to apply punishments."""
+        if not PUNISH_ENABLED:
+            await ctx.send("Punishment system is currently disabled.")
+            return
         gid = ctx.guild.id
         current = get_guild_settings(gid).get("smod_role_id")
         if raw is None or not ctx.message.role_mentions:
@@ -452,6 +470,9 @@ class CoreCog(commands.Cog):
     @has_setup_access()
     async def smodlogchannel(self, ctx):
         """Make the current channel the punishment/mod-log channel."""
+        if not PUNISH_ENABLED:
+            await ctx.send("Punishment system is currently disabled.")
+            return
         set_guild_settings(ctx.guild.id, mod_log_channel_id=ctx.channel.id)
         audit(ctx.guild.id, ctx.author.id, "settings", "guild", ctx.guild.id, f"smod log channel -> #{ctx.channel.name}")
         await ctx.send(f"✅ Punishment logs will go to {ctx.channel.mention}.")
@@ -526,6 +547,9 @@ class CoreCog(commands.Cog):
     @commands.command(name="B")
     async def punish_b(self, ctx, punishment: str = None, user: discord.Member = None, duration: str = None):
         """Apply a punishment role: B <punishment> <user> [duration e.g. 30m 2h 1d 1w]"""
+        if not PUNISH_ENABLED:
+            await ctx.send("Punishment system is currently disabled.")
+            return
         if ctx.guild is None:
             return
         gid = ctx.guild.id
@@ -593,7 +617,7 @@ class CoreCog(commands.Cog):
         await self._dm_punished(ctx.guild, user, key, role, duration or "1h", until, ctx.author)
         await ctx.send(f"🔨 {user.mention} has been given **{key}** for **{duration or '1h'}**.")
 
-    @app_commands.command(name="punish", description="Apply a punishment role to a user")
+    @app_commands.command(name="punish", description="Apply a punishment role to a user [DISABLED]")
     @app_commands.describe(
         punishment="Punishment name (use I?punishroles to see available)",
         user="User to punish",
@@ -610,6 +634,9 @@ class CoreCog(commands.Cog):
         reason: str = None,
     ):
         """Apply a punishment role via slash — admins and SMod role can use it."""
+        if not PUNISH_ENABLED:
+            await interaction.response.send_message("Punishment system is currently disabled.", ephemeral=True)
+            return
         if interaction.guild is None:
             await interaction.response.send_message("Use this in a server.", ephemeral=True)
             return
