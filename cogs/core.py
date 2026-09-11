@@ -226,26 +226,22 @@ class CoreCog(commands.Cog):
 
     @tasks.loop(seconds=45)
     async def punishment_loop(self):
+        # auto-removal disabled per request — bot should never remove punishment roles itself
+        # keep loop only to clean up stale PS entries and log expiry without touching roles
         if not PUNISH_ENABLED:
             return
         now = datetime.now(timezone.utc)
         for p in PS.find({"until": {"$lte": now}}).limit(50):
             guild = self.bot.get_guild(p["guild_id"])
+            PS.delete_one({"_id": p["_id"]})
             if guild:
-                member = guild.get_member(p["user_id"])
-                role = guild.get_role(p["role_id"])
-                if member and role and role in member.roles:
-                    try:
-                        await member.remove_roles(role, reason="Punishment expired")
-                    except Exception:
-                        pass
-                PS.delete_one({"_id": p["_id"]})
                 embed = discord.Embed(
-                    title="⏱️ Punishment expired",
+                    title="⏱️ Punishment expired (not removed)",
                     color=discord.Colour(0x99AAB5),
                     description=(
                         f"**User:** <@{p['user_id']}>\n"
-                        f"**Punishment:** {p.get('name', '?')}"
+                        f"**Punishment:** {p.get('name', '?')}\n"
+                        f"Role was **not** auto-removed — please remove manually if needed."
                     ),
                 )
                 await self.send_mod_log(guild, embed)
@@ -256,8 +252,6 @@ class CoreCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member):
-        if not PUNISH_ENABLED:
-            return
         if before.guild is None or before.roles == after.roles:
             return
         gid = before.guild.id
@@ -268,34 +262,51 @@ class CoreCog(commands.Cog):
         rid_to_name = {rid: name for name, rid in punishments.items()}
         before_ids = {r.id for r in before.roles}
         after_ids = {r.id for r in after.roles}
+
+        async def _find_executor(target: discord.Member, is_add: bool, role_id: int):
+            try:
+                # small delay so audit log propagates
+                await asyncio.sleep(0.6)
+                async for entry in target.guild.audit_logs(limit=5, action=discord.AuditLogAction.member_role_update):
+                    if entry.target and entry.target.id != target.id:
+                        continue
+                    # only recent entries (10s)
+                    if (datetime.now(timezone.utc) - entry.created_at).total_seconds() > 12:
+                        continue
+                    # entry.user is the moderator who did it
+                    return entry.user
+            except Exception:
+                pass
+            return None
+
         # roles added
         for rid in after_ids - before_ids:
             if rid not in rid_to_name:
                 continue
             # skip if this was a bot-initiated punish (already logged via B//punish with PS entry very recent)
             recent = PS.find_one({"guild_id": gid, "user_id": after.id, "role_id": rid})
-            # if PS was created within last 8s, it was already logged as "Punishment applied" — don't double-log
-            if recent and recent.get("applied_at") and (datetime.now(timezone.utc) - recent["applied_at"].replace(tzinfo=timezone.utc) if recent["applied_at"].tzinfo is None else datetime.now(timezone.utc) - recent["applied_at"]).total_seconds() < 8:
-                continue
+            if recent and recent.get("applied_at"):
+                at = recent["applied_at"]
+                if at.tzinfo is None:
+                    at = at.replace(tzinfo=timezone.utc)
+                if (datetime.now(timezone.utc) - at).total_seconds() < 8:
+                    continue
             name = rid_to_name[rid]
             role = after.guild.get_role(rid)
+            executor = await _find_executor(after, True, rid)
+            by_txt = f"{executor.mention} (`{executor.id}`)" if executor else "unknown (no audit log / missing perms)"
             embed = discord.Embed(
                 title="🔨 Punishment role given",
                 color=discord.Colour(0xED4245),
                 description=(
                     f"**User:** {after.mention}\n"
                     f"**Punishment:** {name} ({role.mention if role else f'<@&{rid}>'})\n"
-                    f"**By:** manual / external"
+                    f"**By:** {by_txt}"
                 ),
             )
-            # create a PS entry if none exists so expiry still works for manual adds — default 1h
-            if not recent:
-                until = datetime.now(timezone.utc) + timedelta(hours=1)
-                PS.update_one(
-                    {"guild_id": gid, "user_id": after.id, "role_id": rid},
-                    {"$set": {"name": name, "until": until, "by": 0, "applied_at": datetime.now(timezone.utc)}},
-                    upsert=True,
-                )
+            if executor:
+                audit(gid, executor.id, "punish_given", "user", after.id, f"{name} -> {rid}")
+            # do NOT create auto-expiry PS entry — bot should not auto-remove (per request)
             await self.send_mod_log(after.guild, embed)
 
         # roles removed
@@ -304,16 +315,21 @@ class CoreCog(commands.Cog):
                 continue
             name = rid_to_name[rid]
             role = after.guild.get_role(rid)
-            # clean PS entry
+            # clean any PS entry so it doesn't linger (bot will not re-remove)
             PS.delete_many({"guild_id": gid, "user_id": after.id, "role_id": rid})
+            executor = await _find_executor(after, False, rid)
+            by_txt = f"{executor.mention} (`{executor.id}`)" if executor else "unknown (no audit log / missing perms)"
             embed = discord.Embed(
                 title="✅ Punishment role removed",
                 color=discord.Colour(0x57F287),
                 description=(
                     f"**User:** {after.mention}\n"
-                    f"**Punishment:** {name} ({role.mention if role else f'<@&{rid}>'})"
+                    f"**Punishment:** {name} ({role.mention if role else f'<@&{rid}>'})\n"
+                    f"**By:** {by_txt}"
                 ),
             )
+            if executor:
+                audit(gid, executor.id, "punish_taken", "user", after.id, f"{name} -> {rid}")
             await self.send_mod_log(after.guild, embed)
 
     def _norm_punishment_name(self, name: str) -> str:
