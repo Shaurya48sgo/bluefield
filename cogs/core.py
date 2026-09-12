@@ -31,7 +31,7 @@ from cogs.common import (
 )
 
 OWNER_ID = os.getenv("OWNER_ID")
-PUNISH_ENABLED = False  # punishment system temporarily disabled
+PUNISH_ENABLED = True  # punishments enabled, but bot never auto-removes roles
 
 
 class HelpView(discord.ui.View):
@@ -121,7 +121,7 @@ class HelpView(discord.ui.View):
                     (f"{self.prefix}punishroles", "List all punishment roles boxed up (`[name]` → @Role)."),
                     (f"{self.prefix}smodrole <role>", "Set the SMod role allowed to use `B` punishments."),
                     (f"{self.prefix}smodlogchannel", "Run IN a channel to make it the punishment/mod-log channel."),
-                    (f"B <punishment> <user> [duration]", "Apply a punishment role, e.g. `B mute @user 2h` (SMods/admins/devs/mods). Brackets/spaces auto-fixed: `[jail]`/`[ jail]` → jail. [DISABLED]"),
+                    (f"B <punishment> <user> [duration]", "Apply a punishment role, e.g. `B mute @user 2h` (SMods/admins/devs/mods). Brackets/spaces auto-fixed: `[jail]`/`[ jail]` → jail."),
                     (f"{self.prefix}devhelp", "DM you the full staff guide: channel setup + admin/dev commands."),
                     (f"{self.prefix}suspend <code> <duration>", "Suspend a code, e.g. `30m`, `2h`, `1w` (admins/devs/mods)."),
                     (f"{self.prefix}unsuspend <code>", "Remove a suspension (admins/devs/mods)."),
@@ -273,11 +273,11 @@ class CoreCog(commands.Cog):
                     # only recent entries (10s)
                     if (datetime.now(timezone.utc) - entry.created_at).total_seconds() > 12:
                         continue
-                    # entry.user is the moderator who did it
-                    return entry.user
+                    # entry.user is the moderator who did it, entry.reason is the audit reason
+                    return entry.user, entry.reason
             except Exception:
                 pass
-            return None
+            return None, None
 
         # roles added
         for rid in after_ids - before_ids:
@@ -293,19 +293,24 @@ class CoreCog(commands.Cog):
                     continue
             name = rid_to_name[rid]
             role = after.guild.get_role(rid)
-            executor = await _find_executor(after, True, rid)
+            executor, audit_reason = await _find_executor(after, True, rid)
             by_txt = f"{executor.mention} (`{executor.id}`)" if executor else "unknown (no audit log / missing perms)"
+            desc = (
+                f"**User:** {after.mention}\n"
+                f"**Punishment:** {name} ({role.mention if role else f'<@&{rid}>'})\n"
+                f"**By:** {by_txt}"
+            )
+            if audit_reason:
+                desc += f"\n**Reason:** {audit_reason}"
+            elif recent and recent.get("reason"):
+                desc += f"\n**Reason:** {recent['reason']}"
             embed = discord.Embed(
                 title="🔨 Punishment role given",
                 color=discord.Colour(0xED4245),
-                description=(
-                    f"**User:** {after.mention}\n"
-                    f"**Punishment:** {name} ({role.mention if role else f'<@&{rid}>'})\n"
-                    f"**By:** {by_txt}"
-                ),
+                description=desc,
             )
             if executor:
-                audit(gid, executor.id, "punish_given", "user", after.id, f"{name} -> {rid}")
+                audit(gid, executor.id, "punish_given", "user", after.id, f"{name} -> {rid}" + (f" reason: {audit_reason}" if audit_reason else ""))
             # do NOT create auto-expiry PS entry — bot should not auto-remove (per request)
             await self.send_mod_log(after.guild, embed)
 
@@ -317,19 +322,22 @@ class CoreCog(commands.Cog):
             role = after.guild.get_role(rid)
             # clean any PS entry so it doesn't linger (bot will not re-remove)
             PS.delete_many({"guild_id": gid, "user_id": after.id, "role_id": rid})
-            executor = await _find_executor(after, False, rid)
+            executor, audit_reason = await _find_executor(after, False, rid)
             by_txt = f"{executor.mention} (`{executor.id}`)" if executor else "unknown (no audit log / missing perms)"
+            desc = (
+                f"**User:** {after.mention}\n"
+                f"**Punishment:** {name} ({role.mention if role else f'<@&{rid}>'})\n"
+                f"**By:** {by_txt}"
+            )
+            if audit_reason:
+                desc += f"\n**Reason:** {audit_reason}"
             embed = discord.Embed(
                 title="✅ Punishment role removed",
                 color=discord.Colour(0x57F287),
-                description=(
-                    f"**User:** {after.mention}\n"
-                    f"**Punishment:** {name} ({role.mention if role else f'<@&{rid}>'})\n"
-                    f"**By:** {by_txt}"
-                ),
+                description=desc,
             )
             if executor:
-                audit(gid, executor.id, "punish_taken", "user", after.id, f"{name} -> {rid}")
+                audit(gid, executor.id, "punish_taken", "user", after.id, f"{name} -> {rid}" + (f" reason: {audit_reason}" if audit_reason else ""))
             await self.send_mod_log(after.guild, embed)
 
     def _norm_punishment_name(self, name: str) -> str:
