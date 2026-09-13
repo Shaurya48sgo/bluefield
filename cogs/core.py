@@ -12,6 +12,7 @@ from cogs.common import (
     G,
     PS,
     audit,
+    fmt_duration,
     get_guild_prefix_sync,
     get_guild_settings,
     get_dev_ids,
@@ -103,7 +104,8 @@ class HelpView(discord.ui.View):
                     (f"{self.prefix}blacklist <@user> / {self.prefix}unblacklist <@user>", "Block someone from summon commands (they can still join)."),
                     (f"{self.prefix}activitychannel", "Run IN a channel to make it the activity log channel."),
                     (f"{self.prefix}memberchannel", "Run IN a channel to make it the member log channel."),
-                    (f"{self.prefix}confesschannel", "Run IN a channel to make it the anonymous chat channel."),
+                    (f"{self.prefix}confesschannel [#channel] [cooldown] [-r]", "Set the anonymous chat channel. Cooldown: 0 = no limit, or 30s/10m/2h/1d/1w per code (default 1h, slot-based). `-r` clears."),
+                    (f"{self.prefix}secretthreads [#channel] [-r]", "Set the secret-threads channel. Every secret posted there gets its own discussion thread (1/hour per code, free talk inside threads)."),
                     (f"{self.prefix}groupmax <n>", "Set max groups per member."),
                     (f"{self.prefix}confessmax <n>", "Set max codes per member."),
                     (f"{self.prefix}layout", "Preview the unified secret & reply layout (owner)."),
@@ -130,7 +132,7 @@ class HelpView(discord.ui.View):
             {
                 "title": "🕶️ Anonymous chat",
                 "fields": [
-                    ("/secret say <message> [code] [reply_to]", "Post an anonymous message. Add reply_to:<post number> to reply directly to a post — the author gets a DM. Codes have a Reply button; replies land in your /inbox."),
+                    ("/secret say <message> [code] [reply_to] [mention_user] [mention_code]", "Post anonymously (codes show as `1- CODE`). `reply_to:<post#>`, ping a user or notify a code's owner. Author gets a DM on replies. Threads-channel posts get a discussion thread."),
                     ("/secret code delete <code>", "Delete one of your codes (pick from the list) to free a slot. New codes are generated via `/secret say` or the Reply button."),
                     ("/secret reveal propose <to_code> <your_code> [also_delete]", "Propose mutually revealing identities. If they accept, both of you get DMs showing who's who — optionally deleting both codes (anti-blackmail)."),
                     ("/secret report <code> <reason>", "Report a code to the staff. Anyone can use it; reports go to the reports channel."),
@@ -906,6 +908,7 @@ class CoreCog(commands.Cog):
                 name="Channels",
                 value=(
                     f"Secret chat: {ch('confess_channel_id')}\n"
+                    f"Secret threads: {ch('secret_threads_channel_id')}\n"
                     f"Activity log: {ch('activity_log_channel_id')}\n"
                     f"Member lists: {ch('member_log_channel_id')}\n"
                     f"Mod-log: {ch('mod_log_channel_id')}\n"
@@ -926,7 +929,9 @@ class CoreCog(commands.Cog):
                 name="Limits",
                 value=(
                     f"Max groups/member: {settings.get('max_groups_per_member', 3)}\n"
-                    f"Max codes/member: {settings.get('confess_max_codes', 5)}"
+                    f"Max codes/member: {settings.get('confess_max_codes', 5)}\n"
+                    f"Secret cooldown: 1 per {fmt_duration(settings.get('confess_cooldown', 3600))} per code\n"
+                    f"Threads cooldown: 1 per 1h per code"
                 ),
                 inline=False,
             )
@@ -965,8 +970,8 @@ class CoreCog(commands.Cog):
             ),
         )
         setup.add_field(
-            name="1 · I?confesschannel",
-            value="Anonymous secret-chat channel. `/secret say` posts and replies land here.",
+            name="1 · I?confesschannel [#channel] [cooldown]",
+            value="Anonymous secret-chat channel. Cooldown like `1h`/`30m`/`0` (default 1h per code, slot-based, survives code deletion).",
             inline=False,
         )
         setup.add_field(

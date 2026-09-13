@@ -6,6 +6,7 @@ from discord.ext import commands
 
 from cogs.common import (
     C,
+    CD,
     G,
     I,
     M,
@@ -13,6 +14,7 @@ from cogs.common import (
     RP,
     US,
     audit,
+    fmt_duration,
     generate_code,
     get_extra_code_slots,
     get_guild_settings,
@@ -24,6 +26,7 @@ from cogs.common import (
     is_mod,
     add_extra_code_slots,
     is_owner,
+    parse_duration,
     set_guild_settings,
 )
 from cogs.layouts import (
@@ -45,6 +48,8 @@ COLOR_EMOJIS = {
 }
 
 DEFAULT_MAX_CODES = 5
+DEFAULT_CONFESS_COOLDOWN = 3600  # 1 message per hour per code slot in main channels
+THREADS_COOLDOWN = 3600  # 1 message per hour per code slot in the threads channel
 
 
 def _jump_link(guild_id, channel_id, message_id):
@@ -100,7 +105,11 @@ class ReplyCodeSelectView(discord.ui.View):
         self.original_message = original_message
         self.docs = docs
         options = [
-            discord.SelectOption(label=f"{d.get('nickname', '?')} - {d['code']}", value=d["code"]) for d in docs
+            discord.SelectOption(
+                label=f"{d.get('slot', '?')}- {d.get('nickname', '?')} - {d['code']}",
+                value=d["code"],
+            )
+            for d in docs
         ]
         limit = self.cog._max_codes(guild_id, self.author.id)
         if len(docs) < limit:
@@ -155,7 +164,7 @@ class SecretReplyButton(discord.ui.Button):
         self.code = code
 
     async def callback(self, interaction):
-        docs = list(C.find({"user_id": interaction.user.id}).sort("created_at", 1))
+        docs = self.view.cog._ensure_slots(interaction.user.id)
         embed = discord.Embed(
             title="Reply",
             description="Which code do you want to reply as?",
@@ -208,7 +217,8 @@ class InboxView(discord.ui.View):
 
 
 class NewSecretModal(discord.ui.Modal):
-    def __init__(self, cog, interaction, guild_id, code, message, default_nick, reply_to=None):
+    def __init__(self, cog, interaction, guild_id, code, message, default_nick, reply_to=None,
+                 mention_user_id=None, mention_code=None, channel_id=None):
         super().__init__(title="Your new code")
         self.cog = cog
         self.interaction = interaction
@@ -216,6 +226,9 @@ class NewSecretModal(discord.ui.Modal):
         self.code = code
         self.message = message
         self.reply_to = reply_to
+        self.mention_user_id = mention_user_id
+        self.mention_code = mention_code
+        self.channel_id = channel_id
         example = random_nickname()
         self.nick_input = discord.ui.TextInput(
             label="Nickname (e.g. " + example + ")",
@@ -238,13 +251,20 @@ class NewSecretModal(discord.ui.Modal):
         )
         await interaction.response.send_message(
             embed=embed,
-            view=ColorPickView(self.cog, interaction, self.guild_id, self.code, self.message, reply_to=self.reply_to),
+            view=ColorPickView(
+                self.cog, interaction, self.guild_id, self.code, self.message,
+                reply_to=self.reply_to,
+                mention_user_id=self.mention_user_id,
+                mention_code=self.mention_code,
+                channel_id=self.channel_id,
+            ),
             ephemeral=True,
         )
 
 
 class ColorPickView(discord.ui.View):
-    def __init__(self, cog, interaction, guild_id, code, message, reply_to=None):
+    def __init__(self, cog, interaction, guild_id, code, message, reply_to=None,
+                 mention_user_id=None, mention_code=None, channel_id=None):
         super().__init__(timeout=300)
         self.cog = cog
         self.interaction = interaction
@@ -252,6 +272,9 @@ class ColorPickView(discord.ui.View):
         self.code = code
         self.message = message
         self.reply_to = reply_to
+        self.mention_user_id = mention_user_id
+        self.mention_code = mention_code
+        self.channel_id = channel_id
         options = []
         first = True
         for name, value in SECRET_COLORS.items():
@@ -272,22 +295,46 @@ class ColorPickView(discord.ui.View):
     async def on_color(self, interaction):
         color_value = int(self.color_select.values[0])
         C.update_one({"code": self.code, "user_id": interaction.user.id}, {"$set": {"color": color_value}})
-        if self.reply_to is not None:
+        code_doc = C.find_one({"code": self.code, "user_id": interaction.user.id})
+        slot = self.cog._slot_of(code_doc)
+        channel = None
+        if self.channel_id is not None:
+            channel = interaction.guild.get_channel(self.channel_id)
+        if channel is None:
             channel = self.cog._channel(interaction.guild)
+        in_thread = self.cog._in_thread(interaction)
+        if self.reply_to is not None:
             target_doc = M.find_one({"guild_id": self.guild_id, "post_number": self.reply_to})
             if not target_doc or channel is None:
                 await interaction.response.send_message("The post you were replying to no longer exists.", ephemeral=True)
                 return
+            target_channel = interaction.guild.get_channel(target_doc.get("channel_id")) or channel
             try:
-                original_message = await channel.fetch_message(target_doc["message_id"])
+                original_message = await target_channel.fetch_message(target_doc["message_id"])
             except Exception:
                 await interaction.response.send_message("The post you were replying to was deleted.", ephemeral=True)
                 return
+            if not in_thread:
+                remaining = self.cog._cooldown_remaining(self.guild_id, channel.id, interaction.user.id, slot)
+                if remaining > 0:
+                    await interaction.response.send_message(
+                        embed=discord.Embed(
+                            color=discord.Colour(0xED4245),
+                            description=self.cog._cooldown_fail_text(self.code, slot, remaining),
+                        ),
+                        ephemeral=True,
+                    )
+                    return
             await self.cog.post_reply(
-                interaction, self.guild_id, channel.id, target_doc["code"], self.code, self.message, original_message
+                interaction, self.guild_id, channel.id, target_doc["code"], self.code, self.message, original_message,
+                mention_user_id=self.mention_user_id, mention_code=self.mention_code,
             )
             return
-        await self.cog._post_secret(interaction, self.guild_id, self.code, self.message, color_value)
+        await self.cog._post_secret(
+            interaction, self.guild_id, self.code, self.message, color_value,
+            mention_user_id=self.mention_user_id, mention_code=self.mention_code,
+            channel=channel, in_thread=in_thread,
+        )
 
 
 class ReplyColorPickView(discord.ui.View):
@@ -598,6 +645,91 @@ class ConfessCog(commands.Cog):
             return True
         return False
 
+    # ---------- code slots (numbering) ----------
+
+    def _ensure_slots(self, user_id):
+        """Backfill persistent slot numbers (1, 2, 3, ...) for a user's codes.
+
+        Deleted slots stay free, so a replacement code reuses the lowest free
+        number. Returns the user's code docs sorted oldest-first.
+        """
+        docs = list(C.find({"user_id": user_id}).sort("created_at", 1))
+        used = set()
+        for d in docs:
+            s = d.get("slot")
+            if isinstance(s, int) and s > 0:
+                used.add(s)
+        nxt = 1
+        for d in docs:
+            s = d.get("slot")
+            if isinstance(s, int) and s > 0:
+                continue
+            while nxt in used:
+                nxt += 1
+            C.update_one({"_id": d["_id"]}, {"$set": {"slot": nxt}})
+            d["slot"] = nxt
+            used.add(nxt)
+            nxt += 1
+        return docs
+
+    def _slot_of(self, code_doc):
+        s = (code_doc or {}).get("slot")
+        return s if isinstance(s, int) and s > 0 else "?"
+
+    # ---------- per-code posting cooldown (slot-based, survives code deletion) ----------
+
+    def _cooldown_window(self, guild_id, channel_id):
+        s = get_guild_settings(guild_id)
+        if channel_id is not None and channel_id == s.get("secret_threads_channel_id"):
+            return THREADS_COOLDOWN
+        v = s.get("confess_cooldown", None)
+        if v is None:
+            return DEFAULT_CONFESS_COOLDOWN
+        try:
+            return max(0, int(v))
+        except (TypeError, ValueError):
+            return DEFAULT_CONFESS_COOLDOWN
+
+    def _cooldown_remaining(self, guild_id, channel_id, user_id, slot):
+        window = self._cooldown_window(guild_id, channel_id)
+        if not window or not isinstance(slot, int):
+            return 0
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=window)
+        doc = CD.find_one(
+            {
+                "guild_id": guild_id,
+                "user_id": user_id,
+                "slot": slot,
+                "channel_id": channel_id,
+                "at": {"$gt": cutoff},
+            }
+        )
+        if not doc:
+            return 0
+        at = doc.get("at")
+        if at is None:
+            return 0
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=timezone.utc)
+        return max(0, window - (datetime.now(timezone.utc) - at).total_seconds())
+
+    def _record_post(self, guild_id, channel_id, user_id, slot):
+        if not isinstance(slot, int):
+            return
+        CD.update_one(
+            {"guild_id": guild_id, "user_id": user_id, "slot": slot, "channel_id": channel_id},
+            {"$set": {"at": datetime.now(timezone.utc)}},
+            upsert=True,
+        )
+
+    def _in_thread(self, interaction):
+        ch = getattr(interaction, "channel", None)
+        try:
+            return isinstance(ch, discord.Thread)
+        except Exception:
+            return False
+
+
     @commands.command(name="codecode")
     async def codecode(self, ctx, number: int = None):
         """Create a redeemable bonus-slot voucher code (bot owner/devs). DM only."""
@@ -681,11 +813,72 @@ class ConfessCog(commands.Cog):
 
     @commands.command(name="confesschannel")
     @has_setup_access()
-    async def confesschannel(self, ctx):
-        """Make the current channel the anonymous chat channel."""
-        set_guild_settings(ctx.guild.id, confess_channel_id=ctx.channel.id)
-        audit(ctx.guild.id, ctx.author.id, "settings", "guild", ctx.guild.id, f"confess channel -> #{ctx.channel.name}")
-        await ctx.send(f"✅ Anonymous chat channel set to {ctx.channel.mention}.")
+    async def confesschannel(self, ctx, *, raw: str = None):
+        """Set the anonymous chat channel with optional per-code cooldown.
+
+        Usage: `I?confesschannel [#channel] [cooldown] [-r]`
+        cooldown: 0 = no limit, or 30s/10m/2h/1d/1w (default 1h). `-r` clears it.
+        """
+        gid = ctx.guild.id
+        tokens = (raw or "").strip().split()
+        lowered = [t.lower() for t in tokens]
+        if "-r" in lowered or "remove" in lowered:
+            set_guild_settings(gid, confess_channel_id=None)
+            audit(gid, ctx.author.id, "settings", "guild", gid, "confess channel cleared")
+            await ctx.send("🗑️ Anonymous chat channel cleared.")
+            return
+        channel = None
+        if ctx.message.channel_mentions:
+            channel = ctx.message.channel_mentions[0]
+        else:
+            channel = ctx.channel
+        window = None
+        for t in tokens:
+            if t.lower() in ("-y", "-r", "remove"):
+                continue
+            if t.startswith("<#") and t.endswith(">"):
+                continue
+            parsed = parse_duration(t)
+            if parsed is not None:
+                window = parsed
+        kwargs = {"confess_channel_id": channel.id}
+        if window is not None:
+            kwargs["confess_cooldown"] = window
+        set_guild_settings(gid, **kwargs)
+        effective = window
+        if effective is None:
+            effective = get_guild_settings(gid).get("confess_cooldown", DEFAULT_CONFESS_COOLDOWN)
+        audit(gid, ctx.author.id, "settings", "guild", gid, f"confess channel -> #{channel.name} cooldown {fmt_duration(effective)}")
+        await ctx.send(
+            f"✅ Anonymous chat channel set to {channel.mention}.\n"
+            f"⏳ Cooldown: **1 message per {fmt_duration(effective)} per code** (slot-based, threads exempt)."
+        )
+
+    @commands.command(name="secretthreads")
+    @has_setup_access()
+    async def secretthreads(self, ctx, *, raw: str = None):
+        """Set the secret-threads channel: posts there get an auto discussion thread.
+
+        Usage: `I?secretthreads [#channel] [-r]`
+        """
+        gid = ctx.guild.id
+        tokens = (raw or "").strip().split()
+        lowered = [t.lower() for t in tokens]
+        if "-r" in lowered or "remove" in lowered:
+            set_guild_settings(gid, secret_threads_channel_id=None)
+            audit(gid, ctx.author.id, "settings", "guild", gid, "secret threads channel cleared")
+            await ctx.send("🗑️ Secret-threads channel cleared.")
+            return
+        if ctx.message.channel_mentions:
+            channel = ctx.message.channel_mentions[0]
+        else:
+            channel = ctx.channel
+        set_guild_settings(gid, secret_threads_channel_id=channel.id)
+        audit(gid, ctx.author.id, "settings", "guild", gid, f"secret threads channel -> #{channel.name}")
+        await ctx.send(
+            f"✅ Secret-threads channel set to {channel.mention}.\n"
+            f"🧵 Every secret posted there gets its own discussion thread (1 post per {fmt_duration(THREADS_COOLDOWN)} per code, no limit inside threads)."
+        )
 
     @commands.command(name="codeadd")
     async def codeadd(self, ctx, target: str = None, number: int = None):
@@ -759,7 +952,8 @@ class ConfessCog(commands.Cog):
     secret = app_commands.Group(name="secret", description="Anonymous secret chat")
 
     def _code_label(self, doc):
-        label = f"{doc.get('nickname', '?')} - {doc['code']}"
+        slot = doc.get("slot", "?")
+        label = f"{slot}- {doc.get('nickname', '?')} - {doc['code']}"
         if self._is_suspended(doc):
             label = f"⛔ {label} (suspended)"
         return label
@@ -767,7 +961,7 @@ class ConfessCog(commands.Cog):
     async def code_autocomplete(self, interaction, current):
         gid = interaction.guild.id
         uid = interaction.user.id
-        docs = list(C.find({"user_id": uid}).sort("created_at", 1))
+        docs = self._ensure_slots(uid)
         out = []
         for d in docs:
             label = self._code_label(d)
@@ -779,7 +973,7 @@ class ConfessCog(commands.Cog):
         return out[:25]
 
     async def delete_autocomplete(self, interaction, current):
-        docs = C.find({"user_id": interaction.user.id})
+        docs = self._ensure_slots(interaction.user.id)
         out = []
         for d in docs:
             label = self._code_label(d)
@@ -790,7 +984,7 @@ class ConfessCog(commands.Cog):
         return out
 
     async def nick_autocomplete(self, interaction, current):
-        docs = C.find({"user_id": interaction.user.id}).sort("created_at", 1)
+        docs = self._ensure_slots(interaction.user.id)
         out = []
         for d in docs:
             label = self._code_label(d)
@@ -800,25 +994,87 @@ class ConfessCog(commands.Cog):
                 break
         return out
 
+    def _resolve_post_channel(self, interaction):
+        """Figure out where a /secret say should land.
+
+        Returns (channel, in_thread, error). Threads are exempt from cooldowns
+        and never get auto-threads created inside them.
+        """
+        guild = interaction.guild
+        settings = get_guild_settings(guild.id)
+        confess_id = settings.get("confess_channel_id")
+        threads_id = settings.get("secret_threads_channel_id")
+        if self._in_thread(interaction):
+            parent = getattr(getattr(interaction, "channel", None), "parent", None)
+            parent_id = getattr(parent, "id", None)
+            if parent_id == confess_id or parent_id == threads_id:
+                return (guild.get_channel(parent_id) or parent, True, None)
+            if parent is not None:
+                return (parent, True, None)
+            return (None, True, "Couldn't figure out which thread this is.")
+        cid = getattr(interaction, "channel_id", None)
+        if cid is not None and (cid == confess_id or cid == threads_id):
+            ch = guild.get_channel(cid)
+            if ch is not None:
+                return (ch, False, None)
+        names = []
+        if confess_id:
+            names.append(f"<#{confess_id}>")
+        if threads_id:
+            names.append(f"<#{threads_id}> (threads)")
+        if not names:
+            return (None, False, "Anonymous chat isn't enabled in this server.")
+        return (None, False, f"Anonymous messages only work in {' or '.join(names)}.")
+
+    def _cooldown_fail_text(self, code, slot, remaining):
+        return (
+            f"⏳ Code `{self._slot_code(code, slot)}` can post again in "
+            f"**{fmt_duration(remaining)}** (1 message per channel per cooldown)."
+        )
+
+    def _slot_code(self, code, slot):
+        return f"{slot}- {code}" if isinstance(slot, int) else code
+
+    async def reveal_target_autocomplete(self, interaction, current):
+        docs = list(C.find({"user_id": {"$ne": interaction.user.id}}).sort("created_at", -1))
+        out = []
+        for d in docs:
+            label = self._code_label(d)
+            if current.lower() in label.lower() or current.lower() in d["code"].lower():
+                out.append(app_commands.Choice(name=label, value=d["code"]))
+            if len(out) >= 25:
+                break
+        return out
+
+    async def mention_code_autocomplete(self, interaction, current):
+        return await self.reveal_target_autocomplete(interaction, current)
+
     @secret.command(name="say")
     @app_commands.describe(
         message="The message to post anonymously",
         code="Pick one of your codes, or 'Generate new'",
         reply_to="Post number of the secret you're replying to (optional)",
+        mention_user="Ping a user on your post (optional)",
+        mention_code="Notify the owner of a code on your post (optional)",
     )
-    @app_commands.autocomplete(code=code_autocomplete)
-    async def say(self, interaction, message: str, code: str, reply_to: int = None):
+    @app_commands.autocomplete(code=code_autocomplete, mention_code=mention_code_autocomplete)
+    async def say(
+        self,
+        interaction,
+        message: str,
+        code: str,
+        reply_to: int = None,
+        mention_user: discord.Member = None,
+        mention_code: str = None,
+    ):
         """Post anonymously using a code (or generate a new one)."""
         async def fail(text):
             embed = discord.Embed(color=discord.Colour(0xED4245), description=text)
             await interaction.response.send_message(embed=embed, ephemeral=True)
 
-        channel = self._channel(interaction.guild)
-        if channel is None:
-            await fail("Anonymous chat isn't enabled in this server.")
-            return
-        if interaction.channel_id != channel.id:
-            await fail(f"Anonymous messages only work in {channel.mention}.")
+        channel, in_thread, channel_error = self._resolve_post_channel(interaction)
+        if channel_error:
+            await fail(channel_error)
             return
         if is_blacklisted(interaction.guild.id, interaction.user.id, interaction.user):
             await fail("You are blacklisted from anonymous chat.")
@@ -830,7 +1086,7 @@ class ConfessCog(commands.Cog):
         uid = interaction.user.id
         gid = interaction.guild.id
         limit = self._max_codes(gid, uid)
-        docs = list(C.find({"user_id": uid}).sort("created_at", 1))
+        docs = self._ensure_slots(uid)
 
         target_doc = None
         if reply_to is not None:
@@ -838,6 +1094,19 @@ class ConfessCog(commands.Cog):
             if not target_doc:
                 await fail(f"No post **#{reply_to}** exists here.")
                 return
+
+        mention_code_doc = None
+        if mention_code:
+            mention_code = mention_code.strip().upper()
+            mention_code_doc = C.find_one({"code": mention_code})
+            if not mention_code_doc:
+                await fail(f"No code `{mention_code}` to mention.")
+                return
+            if self._is_suspended(mention_code_doc):
+                await fail(f"Code `{mention_code}` is suspended.")
+                return
+        mention_user_id = mention_user.id if mention_user is not None else None
+        mention_code_str = mention_code_doc["code"] if mention_code_doc else None
 
         code = code.strip().upper()
         if code == "GENERATE_NEW":
@@ -848,9 +1117,14 @@ class ConfessCog(commands.Cog):
                 )
                 return
             code = self._new_code(gid, uid)
-            docs = list(C.find({"user_id": uid}).sort("created_at", 1))
             code_doc = C.find_one({"code": code, "user_id": uid})
-            modal = NewSecretModal(self, interaction, gid, code, message, code_doc.get("nickname"), reply_to=reply_to)
+            modal = NewSecretModal(
+                self, interaction, gid, code, message, code_doc.get("nickname"),
+                reply_to=reply_to,
+                mention_user_id=mention_user_id,
+                mention_code=mention_code_str,
+                channel_id=channel.id,
+            )
             await interaction.response.send_modal(modal)
             return
         else:
@@ -864,17 +1138,29 @@ class ConfessCog(commands.Cog):
                     f"⛔ This code is **suspended** until {until.strftime('%Y-%m-%d %H:%M UTC')}."
                 )
                 return
+            slot = self._slot_of(code_doc)
+            if not in_thread:
+                remaining = self._cooldown_remaining(gid, channel.id, uid, slot)
+                if remaining > 0:
+                    await fail(self._cooldown_fail_text(code, slot, remaining))
+                    return
             if target_doc is not None:
+                target_channel = interaction.guild.get_channel(target_doc.get("channel_id")) or channel
                 try:
-                    original_message = await channel.fetch_message(target_doc["message_id"])
+                    original_message = await target_channel.fetch_message(target_doc["message_id"])
                 except Exception:
                     await fail(f"Post **#{reply_to}** no longer exists.")
                     return
                 await self.post_reply(
-                    interaction, gid, channel.id, target_doc["code"], code, message, original_message
+                    interaction, gid, channel.id, target_doc["code"], code, message, original_message,
+                    mention_user_id=mention_user_id, mention_code=mention_code_str,
                 )
                 return
-            await self._post_secret(interaction, gid, code, message, color=code_doc.get("color"))
+            await self._post_secret(
+                interaction, gid, code, message, color=code_doc.get("color"),
+                mention_user_id=mention_user_id, mention_code=mention_code_str,
+                channel=channel, in_thread=in_thread,
+            )
 
     def _nodm_enabled(self, user_id):
         doc = US.find_one({"user_id": user_id})
@@ -904,13 +1190,57 @@ class ConfessCog(commands.Cog):
         except Exception:
             pass
 
-    async def post_reply(self, interaction, guild_id, channel_id, original_code, code, text, original_message=None):
+    def _resolve_mentions(self, mention_user_id, mention_code):
+        """Returns (ping_user_ids, mention_code_doc, error_text)."""
+        ping_ids = []
+        if mention_user_id is not None:
+            try:
+                ping_ids.append(int(mention_user_id))
+            except (TypeError, ValueError):
+                return None, None, "Invalid user to mention."
+        mdoc = None
+        if mention_code:
+            mdoc = C.find_one({"code": str(mention_code).strip().upper()})
+            if not mdoc:
+                return None, None, f"No code `{mention_code}` to mention."
+            if self._is_suspended(mdoc):
+                return None, None, f"Code `{mdoc['code']}` is suspended."
+            ping_ids.append(mdoc["user_id"])
+        return list(dict.fromkeys(ping_ids)), mdoc, None
+
+    async def post_reply(self, interaction, guild_id, channel_id, original_code, code, text, original_message=None,
+                         mention_user_id=None, mention_code=None):
+        reply_doc = C.find_one({"code": code})
+        slot = None
+        if reply_doc is not None:
+            slot = reply_doc.get("slot")
+            if not isinstance(slot, int):
+                self._ensure_slots(interaction.user.id)
+                reply_doc = C.find_one({"code": code})
+                slot = (reply_doc or {}).get("slot")
+        if not self._in_thread(interaction):
+            remaining = self._cooldown_remaining(guild_id, channel_id, interaction.user.id, slot)
+            if remaining > 0:
+                await interaction.response.send_message(
+                    embed=discord.Embed(
+                        color=discord.Colour(0xED4245),
+                        description=self._cooldown_fail_text(code, slot, remaining),
+                    ),
+                    ephemeral=True,
+                )
+                return
+        ping_ids, mention_doc, mention_error = self._resolve_mentions(mention_user_id, mention_code)
+        if mention_error:
+            await interaction.response.send_message(
+                embed=discord.Embed(color=discord.Colour(0xED4245), description=mention_error),
+                ephemeral=True,
+            )
+            return
         target_post = None
         if original_message is not None:
             orig = M.find_one({"guild_id": guild_id, "message_id": original_message.id})
             if orig:
                 target_post = orig.get("post_number")
-        reply_doc = C.find_one({"code": code})
         target_doc = C.find_one({"code": original_code})
         reply_nick = reply_doc.get("nickname") if reply_doc else None
         target_nick = target_doc.get("nickname") if target_doc else None
@@ -922,6 +1252,8 @@ class ConfessCog(commands.Cog):
         embed = build_reply(
             code, reply_nick, original_code, target_nick, reply_post, target_post, text, link=link, color=reply_color
         )
+        if ping_ids:
+            embed.description += "\n\n" + " ".join(f"<@{uid}>" for uid in ping_ids)
         channel = interaction.guild.get_channel(channel_id)
         if channel is None:
             await interaction.response.send_message("That channel no longer exists.")
@@ -931,7 +1263,9 @@ class ConfessCog(commands.Cog):
             kwargs = {
                 "embed": embed,
                 "view": view,
-                "allowed_mentions": discord.AllowedMentions(everyone=False, roles=False, users=False),
+                "allowed_mentions": discord.AllowedMentions(
+                    everyone=False, roles=False, users=bool(ping_ids)
+                ),
             }
             if original_message is not None:
                 kwargs["reference"] = original_message
@@ -946,10 +1280,12 @@ class ConfessCog(commands.Cog):
                 "message_id": sent.id,
                 "code": code,
                 "owner_id": interaction.user.id,
+                "slot": slot if isinstance(slot, int) else None,
                 "post_number": reply_post,
                 "created_at": datetime.now(timezone.utc),
             }
         )
+        self._record_post(guild_id, channel_id, interaction.user.id, slot)
         owner = C.find_one({"code": original_code})
         if owner:
             I.insert_one(
@@ -965,6 +1301,18 @@ class ConfessCog(commands.Cog):
             )
             if owner["user_id"] != interaction.user.id and link is not None:
                 await self._dm_reply_notice(owner["user_id"], code, reply_post, text, link)
+        if mention_doc is not None and mention_doc["user_id"] != interaction.user.id:
+            I.insert_one(
+                {
+                    "guild_id": guild_id,
+                    "user_id": mention_doc["user_id"],
+                    "code": mention_doc["code"],
+                    "channel_id": channel_id,
+                    "message_id": sent.id,
+                    "text": text,
+                    "created_at": datetime.now(timezone.utc),
+                }
+            )
         audit(guild_id, interaction.user.id, "secret_reply", "code", code)
         await interaction.response.send_message("Reply posted.", ephemeral=True)
 
@@ -990,24 +1338,55 @@ class ConfessCog(commands.Cog):
         M.delete_many(query)
         return removed
 
-    async def _post_secret(self, interaction, guild_id, code, message, color=None):
-        channel = self._channel(interaction.guild)
+    async def _post_secret(self, interaction, guild_id, code, message, color=None,
+                           mention_user_id=None, mention_code=None, channel=None, in_thread=False):
+        if channel is None:
+            channel = self._channel(interaction.guild)
         if channel is None:
             await interaction.response.send_message("Anonymous chat isn't enabled in this server.", ephemeral=True)
             return
         uid = interaction.user.id
-        post_number = _next_post(guild_id)
         code_doc = C.find_one({"code": code, "user_id": uid})
+        slot = None
+        if code_doc is not None:
+            slot = code_doc.get("slot")
+            if not isinstance(slot, int):
+                self._ensure_slots(uid)
+                code_doc = C.find_one({"code": code, "user_id": uid})
+                slot = (code_doc or {}).get("slot")
+        if not in_thread:
+            remaining = self._cooldown_remaining(guild_id, channel.id, uid, slot)
+            if remaining > 0:
+                await interaction.response.send_message(
+                    embed=discord.Embed(
+                        color=discord.Colour(0xED4245),
+                        description=self._cooldown_fail_text(code, slot, remaining),
+                    ),
+                    ephemeral=True,
+                )
+                return
+        ping_ids, mention_doc, mention_error = self._resolve_mentions(mention_user_id, mention_code)
+        if mention_error:
+            await interaction.response.send_message(
+                embed=discord.Embed(color=discord.Colour(0xED4245), description=mention_error),
+                ephemeral=True,
+            )
+            return
+        post_number = _next_post(guild_id)
         nickname = code_doc.get("nickname") if code_doc else None
         if color is None:
             color = code_doc.get("color") if code_doc else None
         embed = build_secret(code, nickname, message, post_number, color=color)
+        if ping_ids:
+            embed.description += "\n\n" + " ".join(f"<@{uid}>" for uid in ping_ids)
         view = SecretReplyView(self, guild_id, channel.id, code)
         try:
             sent = await channel.send(
                 embed=embed,
                 view=view,
-                allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=False),
+                allowed_mentions=discord.AllowedMentions(
+                    everyone=False, roles=False, users=bool(ping_ids)
+                ),
             )
         except Exception as e:
             await interaction.response.send_message(f"Failed to post: {e}", ephemeral=True)
@@ -1019,17 +1398,40 @@ class ConfessCog(commands.Cog):
                 "message_id": sent.id,
                 "code": code,
                 "owner_id": uid,
+                "slot": slot if isinstance(slot, int) else None,
                 "post_number": post_number,
                 "created_at": datetime.now(timezone.utc),
             }
         )
+        self._record_post(guild_id, channel.id, uid, slot)
+        if mention_doc is not None and mention_doc["user_id"] != uid:
+            I.insert_one(
+                {
+                    "guild_id": guild_id,
+                    "user_id": mention_doc["user_id"],
+                    "code": mention_doc["code"],
+                    "channel_id": channel.id,
+                    "message_id": sent.id,
+                    "text": message,
+                    "created_at": datetime.now(timezone.utc),
+                }
+            )
+        settings = get_guild_settings(guild_id)
+        if not in_thread and channel.id == settings.get("secret_threads_channel_id"):
+            try:
+                await sent.create_thread(
+                    name=f"Post #{post_number} discussion",
+                    auto_archive_duration=1440,
+                )
+            except Exception:
+                pass
         limit = self._max_codes(guild_id, uid)
-        docs = list(C.find({"user_id": uid}).sort("created_at", 1))
+        docs = self._ensure_slots(uid)
         confirm = discord.Embed(
             title="Posted anonymously",
             color=discord.Colour(0x9B59B6),
-            description=f"Your secret message was posted with code **`{code}`**.\n"
-            + ("Your codes: " + ", ".join(f"`{d['code']}`" for d in docs) if docs else "You have no codes.")
+            description=f"Your secret message was posted with code **`{self._slot_code(code, slot)}`**.\n"
+            + ("Your codes: " + ", ".join(f"`{self._slot_code(d['code'], d.get('slot'))}`" for d in docs) if docs else "You have no codes.")
             + f" ({len(docs)}/{limit} slots)\nNext time pick a code or 'Generate new' in `/secret say`.",
         )
         await interaction.response.send_message(embed=confirm, ephemeral=True)
@@ -1043,11 +1445,16 @@ class ConfessCog(commands.Cog):
         while C.find_one({"code": code}):
             code = generate_code()
         nickname = random_nickname()
+        used = {d.get("slot") for d in C.find({"user_id": user_id}) if isinstance(d.get("slot"), int)}
+        slot = 1
+        while slot in used:
+            slot += 1
         C.insert_one(
             {
                 "user_id": user_id,
                 "code": code,
                 "nickname": nickname,
+                "slot": slot,
                 "created_at": datetime.now(timezone.utc),
             }
         )
@@ -1107,17 +1514,6 @@ class ConfessCog(commands.Cog):
         await reply(f"✅ Code **`{code}`** nickname changed to **{name}**.")
 
     # ---------- slash: /secret reveal ----------
-
-    async def reveal_target_autocomplete(self, interaction, current):
-        docs = C.find({"user_id": {"$ne": interaction.user.id}}).sort("created_at", -1)
-        out = []
-        for d in docs:
-            label = f"{d.get('nickname', '?')} - {d['code']}"
-            if current.lower() in label.lower() or current.lower() in d["code"].lower():
-                out.append(app_commands.Choice(name=label, value=d["code"]))
-            if len(out) >= 25:
-                break
-        return out
 
     reveal_group = app_commands.Group(name="reveal", description="Mutually reveal identities with another code")
     secret.add_command(reveal_group)
@@ -1497,7 +1893,7 @@ class ConfessCog(commands.Cog):
         for d in docs[:20]:
             status = "⛔ suspended" if self._is_suspended(d) else "✅ active"
             embed.add_field(
-                name=f"`{d['code']}` · {d.get('nickname', '?')}",
+                name=f"`{d.get('slot', '?')}- {d['code']}` · {d.get('nickname', '?')}",
                 value=f"Owner: {self._owner_name(d.get('user_id'))}\nStatus: {status}\nCreated: {d.get('created_at')}",
                 inline=False,
             )
@@ -1526,7 +1922,7 @@ class ConfessCog(commands.Cog):
             created = d.get("created_at")
             created_note = created.strftime("%Y-%m-%d") if created else "?"
             embed.add_field(
-                name=f"`{d['code']}` · {d.get('nickname', '?')}",
+                name=f"`{d.get('slot', '?')}- {d['code']}` · {d.get('nickname', '?')}",
                 value=f"{status} · created {created_note}{hist_note}",
                 inline=False,
             )

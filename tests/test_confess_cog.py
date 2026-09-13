@@ -22,6 +22,7 @@ def make_cog(db):
     db.reveal_proposals.drop()
     db.user_settings.drop()
     db.redeem_codes.drop()
+    db.secret_cooldowns.drop()
     cog = ConfessCog(MagicMock())
     cog.bot = MagicMock()
     from cogs import common, confess
@@ -36,6 +37,7 @@ def make_cog(db):
         mod.RP = db["reveal_proposals"]
         mod.US = db["user_settings"]
         mod.RC = db["redeem_codes"]
+        mod.CD = db["secret_cooldowns"]
     return cog
 
 
@@ -1365,3 +1367,275 @@ def test_codecode_and_codeuse_vouchers():
             common_mod.OWNER_ID = old_owner_id
     finally:
         client.close()
+
+
+# ---------- slots, cooldown, mentions, threads ----------
+
+@skip
+def test_slots_assigned_and_reused_after_delete():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        c1 = cog._new_code(1, 100)
+        c2 = cog._new_code(1, 100)
+        c3 = cog._new_code(1, 100)
+        slots = {d["code"]: d["slot"] for d in db["anon_codes"].find({"user_id": 100})}
+        assert sorted(slots.values()) == [1, 2, 3]
+        # delete the middle slot -> replacement reuses it
+        db["anon_codes"].delete_one({"code": c2})
+        c4 = cog._new_code(1, 100)
+        assert db["anon_codes"].find_one({"code": c4})["slot"] == 2
+        assert c4 not in (c1, c2, c3)
+    finally:
+        client.close()
+
+
+@skip
+def test_slot_labels_in_autocomplete():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        add_code(db, uid=100, code="MYCODE", nickname="Nick")
+        member = make_member(uid=100)
+        interaction = make_interaction(member)
+        result = asyncio.run(cog.code_autocomplete(interaction, ""))
+        labels = [c.name for c in result if c.value != "GENERATE_NEW"]
+        assert any(l.startswith("1- ") and "MYCODE" in l for l in labels)
+    finally:
+        client.close()
+
+
+@skip
+def test_say_cooldown_blocks_second_post():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        db["guild_settings"].insert_one({"guild_id": 1, "confess_channel_id": 555})
+        add_code(db, uid=100, code="TESTCODE")
+        member = make_member(uid=100)
+        interaction = make_interaction(member, channel_id=555)
+        asyncio.run(cog.say.callback(cog, interaction, "first", "testcode"))
+        confirm = interaction.response.send_message.await_args.kwargs["embed"]
+        assert "1- TESTCODE" in confirm.description
+        # second post within the hour is blocked
+        interaction2 = make_interaction(member, channel_id=555)
+        asyncio.run(cog.say.callback(cog, interaction2, "second", "testcode"))
+        embed = interaction2.response.send_message.await_args.kwargs["embed"]
+        assert "can post again in" in embed.description
+        # only one message stored
+        assert db["secret_messages"].count_documents({"code": "TESTCODE"}) == 1
+    finally:
+        client.close()
+
+
+@skip
+def test_say_cooldown_disabled_when_zero():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        db["guild_settings"].insert_one(
+            {"guild_id": 1, "confess_channel_id": 555, "confess_cooldown": 0}
+        )
+        add_code(db, uid=100, code="TESTCODE")
+        member = make_member(uid=100)
+        for i in range(2):
+            interaction = make_interaction(member, channel_id=555)
+            asyncio.run(cog.say.callback(cog, interaction, f"msg{i}", "testcode"))
+        assert db["secret_messages"].count_documents({"code": "TESTCODE"}) == 2
+    finally:
+        client.close()
+
+
+@skip
+def test_cooldown_survives_code_deletion_via_slot():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        db["guild_settings"].insert_one({"guild_id": 1, "confess_channel_id": 555})
+        add_code(db, uid=100, code="OLDCODE")
+        member = make_member(uid=100)
+        interaction = make_interaction(member, channel_id=555)
+        asyncio.run(cog.say.callback(cog, interaction, "first", "oldcode"))
+        # delete the code and make a new one -> reuses slot 1
+        db["anon_codes"].delete_one({"code": "OLDCODE"})
+        new_code = cog._new_code(1, 100)
+        assert db["anon_codes"].find_one({"code": new_code})["slot"] == 1
+        # ...so the cooldown still applies (anti-abuse)
+        interaction2 = make_interaction(member, channel_id=555)
+        asyncio.run(cog.say.callback(cog, interaction2, "sneaky", new_code.lower()))
+        embed = interaction2.response.send_message.await_args.kwargs["embed"]
+        assert "can post again in" in embed.description
+    finally:
+        client.close()
+
+
+@skip
+def test_say_in_thread_exempt_from_cooldown():
+    import discord as _discord
+
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        db["guild_settings"].insert_one({"guild_id": 1, "confess_channel_id": 555})
+        add_code(db, uid=100, code="TESTCODE")
+        member = make_member(uid=100)
+        guild = make_guild()
+
+        def thread_interaction():
+            thread = MagicMock(spec=_discord.Thread)
+            thread.id = 999
+            thread.parent = guild.get_channel(555)
+            inter = make_interaction(member, channel_id=999)
+            inter.channel = thread
+            return inter
+
+        asyncio.run(cog.say.callback(cog, thread_interaction(), "t1", "testcode"))
+        asyncio.run(cog.say.callback(cog, thread_interaction(), "t2", "testcode"))
+        assert db["secret_messages"].count_documents({"code": "TESTCODE"}) == 2
+    finally:
+        client.close()
+
+
+@skip
+def test_say_mention_user_pings_in_embed():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        db["guild_settings"].insert_one({"guild_id": 1, "confess_channel_id": 555})
+        add_code(db, uid=100, code="TESTCODE")
+        member = make_member(uid=100)
+        target = make_member(uid=200)
+        interaction = make_interaction(member, channel_id=555)
+        asyncio.run(cog.say.callback(cog, interaction, "hi there", "testcode", mention_user=target))
+        channel = interaction.guild.get_channel(555)
+        kwargs = channel.send.await_args.kwargs
+        assert "<@200>" in kwargs["embed"].description
+        assert kwargs["allowed_mentions"].users is True
+    finally:
+        client.close()
+
+
+@skip
+def test_say_mention_code_notifies_owner_and_validates():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        db["guild_settings"].insert_one({"guild_id": 1, "confess_channel_id": 555})
+        add_code(db, uid=100, code="MYCODE")
+        add_code(db, uid=200, code="OTHER", nickname="OtherNick")
+        member = make_member(uid=100)
+        interaction = make_interaction(member, channel_id=555)
+        asyncio.run(cog.say.callback(cog, interaction, "hello", "mycode", mention_code="other"))
+        channel = interaction.guild.get_channel(555)
+        assert "<@200>" in channel.send.await_args.kwargs["embed"].description
+        assert db["inbox"].count_documents({"user_id": 200, "code": "OTHER"}) == 1
+        # unknown code rejected
+        interaction2 = make_interaction(member, channel_id=555)
+        asyncio.run(cog.say.callback(cog, interaction2, "hello", "mycode", mention_code="NOPE"))
+        embed = interaction2.response.send_message.await_args.kwargs["embed"]
+        assert "NOPE" in embed.description
+        # suspended code rejected
+        from datetime import timedelta
+
+        db["anon_codes"].update_one(
+            {"code": "OTHER"},
+            {"$set": {"suspended_until": datetime.now(timezone.utc) + timedelta(hours=1)}},
+        )
+        interaction3 = make_interaction(member, channel_id=555)
+        asyncio.run(cog.say.callback(cog, interaction3, "hello", "mycode", mention_code="other"))
+        embed = interaction3.response.send_message.await_args.kwargs["embed"]
+        assert "suspended" in embed.description.lower()
+    finally:
+        client.close()
+
+
+@skip
+def test_threads_channel_post_creates_thread():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        db["guild_settings"].insert_one(
+            {"guild_id": 1, "confess_channel_id": 555, "secret_threads_channel_id": 777}
+        )
+        add_code(db, uid=100, code="TESTCODE")
+        member = make_member(uid=100)
+        guild = make_guild()
+        channel = guild.get_channel(777)
+        channel.send.return_value.create_thread = AsyncMock()
+        interaction = make_interaction(member, channel_id=777)
+        interaction.guild = guild
+        asyncio.run(cog.say.callback(cog, interaction, "thread starter", "testcode"))
+        channel.send.assert_awaited_once()
+        channel.send.return_value.create_thread.assert_awaited_once()
+        assert "Post #1" in channel.send.return_value.create_thread.await_args.kwargs["name"]
+    finally:
+        client.close()
+
+
+def _setup_ctx(uid=100):
+    guild = make_guild()
+    guild.id = 1
+    author = make_member(uid=uid, manage_roles=True)
+    channel = guild.get_channel(555)
+    channel.name = "secrets"
+    ctx = MagicMock()
+    ctx.author = author
+    ctx.guild = guild
+    ctx.channel = channel
+    ctx.message.channel_mentions = []
+    ctx.send = AsyncMock()
+    return ctx
+
+
+@skip
+def test_confesschannel_sets_cooldown_and_clears():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        ctx = _setup_ctx()
+        asyncio.run(cog.confesschannel.callback(cog, ctx, raw="30m"))
+        settings = db["guild_settings"].find_one({"guild_id": 1})
+        assert settings["confess_channel_id"] == 555
+        assert settings["confess_cooldown"] == 1800
+        msg = ctx.send.await_args.args[0]
+        assert "30m" in msg
+        # 0 disables
+        asyncio.run(cog.confesschannel.callback(cog, ctx, raw="0"))
+        assert db["guild_settings"].find_one({"guild_id": 1})["confess_cooldown"] == 0
+        # -r clears
+        asyncio.run(cog.confesschannel.callback(cog, ctx, raw="-r"))
+        assert db["guild_settings"].find_one({"guild_id": 1}).get("confess_channel_id") is None
+    finally:
+        client.close()
+
+
+@skip
+def test_secretthreads_sets_and_clears():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        ctx = _setup_ctx()
+        asyncio.run(cog.secretthreads.callback(cog, ctx, raw=None))
+        assert db["guild_settings"].find_one({"guild_id": 1})["secret_threads_channel_id"] == 555
+        asyncio.run(cog.secretthreads.callback(cog, ctx, raw="-r"))
+        assert db["guild_settings"].find_one({"guild_id": 1}).get("secret_threads_channel_id") is None
+    finally:
+        client.close()
+
+
+def test_parse_duration_and_fmt_duration():
+    from cogs.common import fmt_duration, parse_duration
+
+    assert parse_duration("0") == 0
+    assert parse_duration("off") == 0
+    assert parse_duration("30s") == 30
+    assert parse_duration("10m") == 600
+    assert parse_duration("2h") == 7200
+    assert parse_duration("1d") == 86400
+    assert parse_duration("1w") == 604800
+    assert parse_duration("45") == 45
+    assert parse_duration("nope") is None
+    assert parse_duration(None) is None
+    assert fmt_duration(0) == "no limit"
+    assert fmt_duration(3600) == "1h"
+    assert fmt_duration(90) == "1m 30s"

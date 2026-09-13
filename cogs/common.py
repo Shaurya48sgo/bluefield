@@ -1,5 +1,6 @@
 import os
 import random
+import re
 import string
 
 from discord.ext import commands
@@ -27,6 +28,7 @@ RP = _db["reveal_proposals"]
 US = _db["user_settings"]
 RC = _db["redeem_codes"]
 PS = _db["active_punishments"]
+CD = _db["secret_cooldowns"]
 
 PREFIX_CACHE = {}
 
@@ -113,6 +115,43 @@ def parse_color(value):
     if len(v) == 6 and all(c in "0123456789abcdef" for c in v):
         return int(v, 16)
     return None
+
+
+DURATION_MULTIPLIERS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+
+
+def parse_duration(value):
+    """Parse '0'/None/'off' -> 0, '30s'/'10m'/'2h'/'1d'/'1w'/bare seconds -> int seconds.
+
+    Returns None if invalid.
+    """
+    if value is None:
+        return None
+    v = str(value).strip().lower()
+    if v in ("0", "off", "none", "no", "nolimit", "no-limit", "no limit"):
+        return 0
+    m = re.fullmatch(r"(\d+)\s*([smhdw])?", v)
+    if not m:
+        return None
+    num = int(m.group(1))
+    unit = m.group(2) or "s"
+    return num * DURATION_MULTIPLIERS[unit]
+
+
+def fmt_duration(seconds):
+    """Humanize seconds: 0 -> 'no limit', 90 -> '1m 30s', 3600 -> '1h'."""
+    try:
+        seconds = int(seconds)
+    except (TypeError, ValueError):
+        return "?"
+    if seconds <= 0:
+        return "no limit"
+    parts = []
+    for unit, size in (("w", 604800), ("d", 86400), ("h", 3600), ("m", 60), ("s", 1)):
+        if seconds >= size:
+            parts.append(f"{seconds // size}{unit}")
+            seconds %= size
+    return " ".join(parts)
 
 
 def parse_mentions(guild, text):
