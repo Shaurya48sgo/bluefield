@@ -106,6 +106,7 @@ class HelpView(discord.ui.View):
                     (f"{self.prefix}memberchannel", "Run IN a channel to make it the member log channel."),
                     (f"{self.prefix}confesschannel [#channel] [cooldown] [-r]", "Set the anonymous chat channel. Cooldown: 0 = no limit, or 30s/10m/2h/1d/1w per code (default no limit, slot-based). `-r` clears."),
                     (f"{self.prefix}secretthreads [#channel] [-r]", "Set the secret-threads channel. Every secret posted there gets its own discussion thread (1/hour per code, free talk inside threads)."),
+                    (f"{self.prefix}confesslist", "List the confess + secret-threads channels with their per-code cooldowns."),
                     (f"{self.prefix}groupmax <n>", "Set max groups per member."),
                     (f"{self.prefix}confessmax <n>", "Set max codes per member."),
                     (f"{self.prefix}layout", "Preview the unified secret & reply layout (owner)."),

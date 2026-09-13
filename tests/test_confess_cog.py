@@ -1660,3 +1660,29 @@ def test_parse_duration_and_fmt_duration():
     assert fmt_duration(0) == "no limit"
     assert fmt_duration(3600) == "1h"
     assert fmt_duration(90) == "1m 30s"
+
+
+@skip
+def test_confesslist_shows_channels_and_cooldowns():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        ctx = _setup_ctx()
+        # nothing set -> 0
+        asyncio.run(cog.confesslist.callback(cog, ctx))
+        embed = ctx.send.await_args.kwargs["embed"]
+        assert "(0)" in embed.title
+        assert "0 — no confess channels" in embed.description
+        # set both -> listed with cooldowns
+        db["guild_settings"].insert_one(
+            {"guild_id": 1, "confess_channel_id": 555, "confess_cooldown": 1800,
+             "secret_threads_channel_id": 555}
+        )
+        asyncio.run(cog.confesslist.callback(cog, ctx))
+        embed = ctx.send.await_args.kwargs["embed"]
+        assert "(2)" in embed.title
+        assert "30m" in embed.description  # confess cooldown
+        assert "1h" in embed.description  # threads cooldown
+        assert "<#555>" in embed.description
+    finally:
+        client.close()

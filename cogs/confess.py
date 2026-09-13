@@ -880,6 +880,43 @@ class ConfessCog(commands.Cog):
             f"🧵 Every secret posted there gets its own discussion thread (1 post per {fmt_duration(THREADS_COOLDOWN)} per code, no limit inside threads)."
         )
 
+    @commands.command(name="confesslist")
+    @has_setup_access()
+    async def confesslist(self, ctx):
+        """List the anonymous chat + secret-threads channels and their per-code cooldowns."""
+        gid = ctx.guild.id
+        settings = get_guild_settings(gid)
+        confess_id = settings.get("confess_channel_id")
+        threads_id = settings.get("secret_threads_channel_id")
+        cooldown = settings.get("confess_cooldown", DEFAULT_CONFESS_COOLDOWN)
+
+        def _mention(cid):
+            if not cid:
+                return None
+            ch = ctx.guild.get_channel(cid)
+            return ch.mention if ch else f"<#{cid}>"
+
+        entries = []
+        confess_txt = _mention(confess_id)
+        if confess_txt:
+            entries.append(
+                f"📝 Anonymous chat: {confess_txt}\n"
+                f"⏳ Cooldown: **1 message per {fmt_duration(cooldown)} per code**"
+            )
+        threads_txt = _mention(threads_id)
+        if threads_txt:
+            entries.append(
+                f"🧵 Secret threads: {threads_txt}\n"
+                f"⏳ Cooldown: **1 message per {fmt_duration(THREADS_COOLDOWN)} per code** (no limit inside threads)"
+            )
+        embed = discord.Embed(
+            title=f"📋 Confess channels ({len(entries)})",
+            color=discord.Colour(0x9B59B6),
+            description="\n\n".join(entries) if entries else "0 — no confess channels set up yet.",
+        )
+        embed.set_footer(text="I?confesschannel [#channel] [cooldown] · I?secretthreads [#channel]")
+        await ctx.send(embed=embed)
+
     @commands.command(name="codeadd")
     async def codeadd(self, ctx, target: str = None, number: int = None):
         """Grant extra secret-code slots to a user (bot owner/devs only). Works in DMs."""
