@@ -104,7 +104,7 @@ class HelpView(discord.ui.View):
                     (f"{self.prefix}blacklist <@user> / {self.prefix}unblacklist <@user>", "Block someone from summon commands (they can still join)."),
                     (f"{self.prefix}activitychannel", "Run IN a channel to make it the activity log channel."),
                     (f"{self.prefix}memberchannel", "Run IN a channel to make it the member log channel."),
-                    (f"{self.prefix}confesschannel [#channel] [cooldown] [-r]", "Set the anonymous chat channel. Cooldown: 0 = no limit, or 30s/10m/2h/1d/1w per code (default 1h, slot-based). `-r` clears."),
+                    (f"{self.prefix}confesschannel [#channel] [cooldown] [-r]", "Set the anonymous chat channel. Cooldown: 0 = no limit, or 30s/10m/2h/1d/1w per code (default no limit, slot-based). `-r` clears."),
                     (f"{self.prefix}secretthreads [#channel] [-r]", "Set the secret-threads channel. Every secret posted there gets its own discussion thread (1/hour per code, free talk inside threads)."),
                     (f"{self.prefix}groupmax <n>", "Set max groups per member."),
                     (f"{self.prefix}confessmax <n>", "Set max codes per member."),
@@ -930,7 +930,7 @@ class CoreCog(commands.Cog):
                 value=(
                     f"Max groups/member: {settings.get('max_groups_per_member', 3)}\n"
                     f"Max codes/member: {settings.get('confess_max_codes', 5)}\n"
-                    f"Secret cooldown: 1 per {fmt_duration(settings.get('confess_cooldown', 3600))} per code\n"
+                    f"Secret cooldown: 1 per {fmt_duration(settings.get('confess_cooldown', 0))} per code\n"
                     f"Threads cooldown: 1 per 1h per code"
                 ),
                 inline=False,
@@ -971,7 +971,7 @@ class CoreCog(commands.Cog):
         )
         setup.add_field(
             name="1 · I?confesschannel [#channel] [cooldown]",
-            value="Anonymous secret-chat channel. Cooldown like `1h`/`30m`/`0` (default 1h per code, slot-based, survives code deletion).",
+            value="Anonymous secret-chat channel. Cooldown like `1h`/`30m`/`0` (default no limit, slot-based, survives code deletion).",
             inline=False,
         )
         setup.add_field(

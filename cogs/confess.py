@@ -48,7 +48,7 @@ COLOR_EMOJIS = {
 }
 
 DEFAULT_MAX_CODES = 5
-DEFAULT_CONFESS_COOLDOWN = 3600  # 1 message per hour per code slot in main channels
+DEFAULT_CONFESS_COOLDOWN = 0  # unlimited unless a server sets one via I?confesschannel
 THREADS_COOLDOWN = 3600  # 1 message per hour per code slot in the threads channel
 
 
@@ -817,7 +817,7 @@ class ConfessCog(commands.Cog):
         """Set the anonymous chat channel with optional per-code cooldown.
 
         Usage: `I?confesschannel [#channel] [cooldown] [-r]`
-        cooldown: 0 = no limit, or 30s/10m/2h/1d/1w (default 1h). `-r` clears it.
+        cooldown: 0 = no limit, or 30s/10m/2h/1d/1w (default no limit). `-r` clears it.
         """
         gid = ctx.guild.id
         tokens = (raw or "").strip().split()

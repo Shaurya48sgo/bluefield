@@ -1410,7 +1410,9 @@ def test_say_cooldown_blocks_second_post():
     client, db = get_test_db()
     try:
         cog = make_cog(db)
-        db["guild_settings"].insert_one({"guild_id": 1, "confess_channel_id": 555})
+        db["guild_settings"].insert_one(
+            {"guild_id": 1, "confess_channel_id": 555, "confess_cooldown": 3600}
+        )
         add_code(db, uid=100, code="TESTCODE")
         member = make_member(uid=100)
         interaction = make_interaction(member, channel_id=555)
@@ -1424,6 +1426,23 @@ def test_say_cooldown_blocks_second_post():
         assert "can post again in" in embed.description
         # only one message stored
         assert db["secret_messages"].count_documents({"code": "TESTCODE"}) == 1
+    finally:
+        client.close()
+
+
+@skip
+def test_say_unlimited_by_default_no_cooldown_set():
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        # pre-existing setup style: channel set, no cooldown key -> unlimited
+        db["guild_settings"].insert_one({"guild_id": 1, "confess_channel_id": 555})
+        add_code(db, uid=100, code="TESTCODE")
+        member = make_member(uid=100)
+        for i in range(3):
+            interaction = make_interaction(member, channel_id=555)
+            asyncio.run(cog.say.callback(cog, interaction, f"msg{i}", "testcode"))
+        assert db["secret_messages"].count_documents({"code": "TESTCODE"}) == 3
     finally:
         client.close()
 
@@ -1451,7 +1470,9 @@ def test_cooldown_survives_code_deletion_via_slot():
     client, db = get_test_db()
     try:
         cog = make_cog(db)
-        db["guild_settings"].insert_one({"guild_id": 1, "confess_channel_id": 555})
+        db["guild_settings"].insert_one(
+            {"guild_id": 1, "confess_channel_id": 555, "confess_cooldown": 3600}
+        )
         add_code(db, uid=100, code="OLDCODE")
         member = make_member(uid=100)
         interaction = make_interaction(member, channel_id=555)
