@@ -8,6 +8,7 @@ Single-package discord.py bot (no README, no CI, no lint/typecheck config). Entr
 - Copy `.env.example` → `.env` and set `DISCORD_TOKEN`, `OWNER_ID`, `MONGO_URI` (defaults to `mongodb://localhost:27017`). Bot exits at startup if `DISCORD_TOKEN` is missing.
 - Run: `python main.py`. MongoDB must be reachable — `cogs/common.py` creates a `MongoClient` and unique indexes at import time.
 - No formatter/linter/typechecker configured; no CI workflows.
+- Commits auto-push: `.git/hooks/post-commit` pushes the current branch to `origin` on every commit (creds in `~/.git-credentials`), so just commit — no separate push needed.
 
 ## Architecture
 
