@@ -34,6 +34,82 @@ from cogs.common import (
 OWNER_ID = os.getenv("OWNER_ID")
 PUNISH_ENABLED = True  # punishments enabled, but bot never auto-removes roles
 
+# Every emoji the bot uses, grouped by area — checklist for custom-emoji replacements.
+# (emoji, what it's used for). Keep in sync when adding new bot messages.
+REQUIRED_EMOJIS = {
+    "🎮 Summons": [
+        ("🎮", "EasyJoin panel title"),
+        ("👥", "Members button / member lists"),
+        ("✅", "Join button / joined confirmations"),
+        ("❌", "Leave button / decline buttons"),
+        ("🔒", "Close button / closed panels"),
+        ("✏️", "Rename button"),
+        ("🔔", "Add-pingers button / chosen-pingers label"),
+        ("🗑️", "Remove pingers / inviters buttons"),
+        ("🤝", "Add-inviters button / can-invite flag"),
+        ("⚙️", "Edit-summon embed title"),
+        ("👑", "Owner flag"),
+        ("🔑", "Co-owner flag"),
+        ("📢", "Can-ping flag"),
+        ("🚪", "Can-join field"),
+        ("🪪", "Servercard title"),
+        ("⭐", "Special-roles field"),
+        ("📜", "Summon logs title"),
+        ("👋", "Left-group message"),
+    ],
+    "🕶️ Anonymous secrets": [
+        ("🕶️", "Anonymous-codes titles"),
+        ("💬", "Reply DM notice"),
+        ("🔔", "Code-mentioned notice"),
+        ("🔕", "Reply-DMs OFF state"),
+        ("📝", "Anonymous-chat channel label"),
+        ("🧵", "Secret-threads channel label"),
+        ("📋", "Confess-channels list title"),
+        ("⏳", "Cooldown notices"),
+        ("🎟️", "Bonus-slot voucher embed"),
+        ("📩", "DM-only notices"),
+        ("🔍", "Hacks search button"),
+        ("👤", "Hacks profile title"),
+        ("✅", "Reveal accept button"),
+        ("❌", "Reveal decline button"),
+        ("🤝", "Mutual-reveal accepted"),
+        ("🗑️", "Codes-deleted note"),
+        ("🚩", "Report / appeal embeds"),
+        ("⌛", "Reveal-request expired"),
+        ("↳", "Suspension detail field"),
+        ("⚠️", "DM-failed / slots-reduced notes"),
+        ("🟣", "Color picker: Purple"),
+        ("🔵", "Color picker: Blue"),
+        ("🟢", "Color picker: Green"),
+        ("🟡", "Color picker: Yellow"),
+        ("🔴", "Color picker: Red"),
+        ("🩷", "Color picker: Pink"),
+        ("🟠", "Color picker: Orange"),
+        ("🩵", "Color picker: Cyan"),
+    ],
+    "🛡️ Staff & core": [
+        ("🔨", "Punishment applied / given embeds"),
+        ("⏱️", "Punishment-expired log"),
+        ("🛡️", "Mod add/remove, admin help page"),
+        ("🔧", "Setup-access granted / removed"),
+        ("🖥️", "Bot-status embed"),
+        ("🛠️", "Channel-setup guide"),
+        ("📦", "Manage-a-summon help page"),
+        ("📋", "Copy-paste demo field"),
+        ("◀️", "Help previous-page button"),
+        ("▶️", "Help next-page button"),
+        ("⛔", "Disabled / banned states"),
+    ],
+    "⚙️ System": [
+        ("⛔", "Bot-disabled-in-server notice"),
+        ("🟢", "Online ping to owner"),
+        ("⚠️", "Command-error message"),
+    ],
+    "🔣 Text symbols": [
+        ("→", "Arrow in help text (punishroles)"),
+    ],
+}
+
 
 class HelpView(discord.ui.View):
     def __init__(self, cog, author, prefix):
@@ -725,6 +801,25 @@ class CoreCog(commands.Cog):
             await ctx.author.send(embeds=embeds[i : i + 10])
         audit(ctx.guild.id, ctx.author.id, "colors", "guild", ctx.guild.id)
         await ctx.send(f"📩 DM'd you **{len(embeds)}** embed colours.")
+
+    @commands.command(name="emojies")
+    async def emojies(self, ctx):
+        """List every emoji the bot uses (owner/devs only) — checklist for custom emojis."""
+        allowed = is_owner(ctx.author.id) or (
+            ctx.guild is not None and is_dev(ctx.guild.id, ctx.author.id)
+        )
+        if not allowed:
+            await ctx.send("Only the bot owner and devs can use this.")
+            return
+        for group, items in REQUIRED_EMOJIS.items():
+            embed = discord.Embed(
+                title=f"{group} ({len(items)})",
+                color=discord.Colour(0x5865F2),
+                description="\n".join(f"{e} — {use}" for e, use in items),
+            )
+            await ctx.send(embed=embed)
+        gid = ctx.guild.id if ctx.guild else 0
+        audit(gid, ctx.author.id, "emojies", "guild", gid)
 
     async def send_mod_log(self, guild, embed):
         cid = get_guild_settings(guild.id).get("mod_log_channel_id")

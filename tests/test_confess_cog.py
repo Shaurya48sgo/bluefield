@@ -1530,7 +1530,9 @@ def test_say_mention_user_pings_in_embed():
         asyncio.run(cog.say.callback(cog, interaction, "hi there", "testcode", mention_user=target))
         channel = interaction.guild.get_channel(555)
         kwargs = channel.send.await_args.kwargs
-        assert "<@200>" in kwargs["embed"].description
+        # real user pings go in message content (mentions in embeds don't notify)
+        assert "<@200>" in (kwargs.get("content") or "")
+        assert "<@200>" not in kwargs["embed"].description
         assert kwargs["allowed_mentions"].users is True
     finally:
         client.close()

@@ -472,3 +472,31 @@ def test_B_applies_punishment_role_and_logs():
             assert "don't have permission" in ctx.send.await_args.args[0]
     finally:
         client.close()
+
+
+@skip
+def test_emojies_owner_dev_only_and_lists_groups():
+    from cogs.core import REQUIRED_EMOJIS
+
+    client, db = get_test_db()
+    try:
+        cog = make_cog(db)
+        # owner (plain user, not admin) can run it — one embed per group
+        with bot_owner_uid("100"):
+            ctx = make_ctx(make_user(100))
+            asyncio.run(cog.emojies.callback(cog, ctx))
+            assert ctx.send.await_count == len(REQUIRED_EMOJIS)
+            first = ctx.send.await_args_list[0].kwargs["embed"]
+            assert "Summons" in first.title
+            assert "🎮" in first.description
+        # dev (not owner) can run it
+        db["guild_settings"].insert_one({"guild_id": 1, "dev_ids": [200]})
+        ctx = make_ctx(make_user(200))
+        asyncio.run(cog.emojies.callback(cog, ctx))
+        assert ctx.send.await_count == len(REQUIRED_EMOJIS)
+        # plain admin without dev is rejected
+        ctx = make_ctx(make_admin(999))
+        asyncio.run(cog.emojies.callback(cog, ctx))
+        assert "owner and devs" in ctx.send.await_args.args[0]
+    finally:
+        client.close()

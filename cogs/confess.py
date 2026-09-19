@@ -1320,10 +1320,11 @@ class ConfessCog(commands.Cog):
         embed = build_reply(
             code, reply_nick, original_code, target_nick, reply_post, target_post, text, link=link, color=reply_color
         )
-        if ping_ids:
-            embed.description += "\n\n" + " ".join(f"<@{uid}>" for uid in ping_ids)
         if mention_doc is not None:
             embed.description += f"\n\n🔔 Mention: `{self._slot_code(mention_doc['code'], mention_doc.get('slot'))}`"
+        # Real user pings go in the message content, NOT the embed —
+        # mentions inside embeds don't trigger notifications.
+        ping_content = " ".join(f"<@{uid}>" for uid in ping_ids) if ping_ids else None
         channel = interaction.guild.get_channel(channel_id)
         if channel is None:
             await interaction.response.send_message("That channel no longer exists.")
@@ -1331,6 +1332,7 @@ class ConfessCog(commands.Cog):
         view = SecretReplyView(self, guild_id, channel_id, code)
         try:
             kwargs = {
+                "content": ping_content,
                 "embed": embed,
                 "view": view,
                 "allowed_mentions": discord.AllowedMentions(
@@ -1451,13 +1453,15 @@ class ConfessCog(commands.Cog):
         if color is None:
             color = code_doc.get("color") if code_doc else None
         embed = build_secret(code, nickname, message, post_number, color=color)
-        if ping_ids:
-            embed.description += "\n\n" + " ".join(f"<@{uid}>" for uid in ping_ids)
         if mention_doc is not None:
             embed.description += f"\n\n🔔 Mention: `{self._slot_code(mention_doc['code'], mention_doc.get('slot'))}`"
+        # Real user pings go in the message content, NOT the embed —
+        # mentions inside embeds don't trigger notifications.
+        ping_content = " ".join(f"<@{uid}>" for uid in ping_ids) if ping_ids else None
         view = SecretReplyView(self, guild_id, channel.id, code)
         try:
             sent = await channel.send(
+                content=ping_content,
                 embed=embed,
                 view=view,
                 allowed_mentions=discord.AllowedMentions(

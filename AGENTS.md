@@ -15,7 +15,7 @@ Single-package discord.py bot (no README, no CI, no lint/typecheck config). Entr
 - `cogs/common.py` — shared Mongo handles (`bluefield` DB: `G S AS BL AL C P M I RP US RC PS CD`), prefix cache, duration/color parsing, role helpers (`is_admin` = administrator OR manage_roles; `is_owner`/`is_dev`/`is_mod`/`is_setup`/`is_staff`/`is_privileged`), `audit()` swallows DB errors.
 - `cogs/summons.py` — virtual summon groups (`summon_roles`); slash `/summon /create /edit /delete /join /leave /invite_to /ban_from /unban_from /list /servercard /easyjoin` plus EasyJoin button panels (`easyjoin_panels`).
 - `cogs/confess.py` — anonymous secrets (`anon_codes`, `secret_messages`, `secret_cooldowns`, `reveal_proposals`, `redeem_codes`, ...); slash `/secret say`, `/dm`, `/inbox`; prefix `I?confesschannel / secretthreads / confessmax / codeadd / suspend / unsuspend`.
-- `cogs/core.py` — staff/punishments (`I?punishment / punishroles / B / smodrole`, `I?dev / mod / server / modlog / reports`, `HelpView`).
+- `cogs/core.py` — staff/punishments (`I?punishment / punishroles / B / smodrole`, `I?dev / mod / server / modlog / reports`, `I?emojies` owner/dev emoji checklist backed by `REQUIRED_EMOJIS`, `HelpView`).
 - `cogs/layouts.py` — pure embed builders (`build_secret`, `build_reply`); safe to unit-test without Discord/Mongo.
 
 ## Testing
