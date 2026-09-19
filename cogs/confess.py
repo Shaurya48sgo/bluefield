@@ -1072,6 +1072,12 @@ class ConfessCog(commands.Cog):
     def _slot_code(self, code, slot):
         return f"{slot}- {code}" if isinstance(slot, int) else code
 
+    def _mention_label(self, mention_doc):
+        """How a mentioned code is shown in-channel: nickname + slot-code, no identity."""
+        nick = (mention_doc or {}).get("nickname") or "?"
+        code = (mention_doc or {}).get("code", "?")
+        return f"**{nick}** `{self._slot_code(code, (mention_doc or {}).get('slot'))}`"
+
     async def reveal_target_autocomplete(self, interaction, current):
         docs = list(C.find({"user_id": {"$ne": interaction.user.id}}).sort("created_at", -1))
         out = []
@@ -1321,7 +1327,7 @@ class ConfessCog(commands.Cog):
             code, reply_nick, original_code, target_nick, reply_post, target_post, text, link=link, color=reply_color
         )
         if mention_doc is not None:
-            embed.description += f"\n\n🔔 Mention: `{self._slot_code(mention_doc['code'], mention_doc.get('slot'))}`"
+            embed.description += f"\n\n🔔 Mention: {self._mention_label(mention_doc)}"
         # Real user pings go in the message content, NOT the embed —
         # mentions inside embeds don't trigger notifications.
         ping_content = " ".join(f"<@{uid}>" for uid in ping_ids) if ping_ids else None
@@ -1454,7 +1460,7 @@ class ConfessCog(commands.Cog):
             color = code_doc.get("color") if code_doc else None
         embed = build_secret(code, nickname, message, post_number, color=color)
         if mention_doc is not None:
-            embed.description += f"\n\n🔔 Mention: `{self._slot_code(mention_doc['code'], mention_doc.get('slot'))}`"
+            embed.description += f"\n\n🔔 Mention: {self._mention_label(mention_doc)}"
         # Real user pings go in the message content, NOT the embed —
         # mentions inside embeds don't trigger notifications.
         ping_content = " ".join(f"<@{uid}>" for uid in ping_ids) if ping_ids else None

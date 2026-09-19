@@ -1556,6 +1556,7 @@ def test_say_mention_code_notifies_owner_and_validates():
         assert kwargs["allowed_mentions"].users is False
         # ...it shows which code was mentioned and notifies the owner via inbox/DM
         assert "OTHER" in kwargs["embed"].description
+        assert "OtherNick" in kwargs["embed"].description
         assert db["inbox"].count_documents({"user_id": 200, "code": "OTHER"}) == 1
         # unknown code rejected
         interaction2 = make_interaction(member, channel_id=555)
