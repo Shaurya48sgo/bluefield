@@ -1548,7 +1548,12 @@ def test_say_mention_code_notifies_owner_and_validates():
         interaction = make_interaction(member, channel_id=555)
         asyncio.run(cog.say.callback(cog, interaction, "hello", "mycode", mention_code="other"))
         channel = interaction.guild.get_channel(555)
-        assert "<@200>" in channel.send.await_args.kwargs["embed"].description
+        kwargs = channel.send.await_args.kwargs
+        # code mention must NOT ping the owner's real account...
+        assert "<@200>" not in kwargs["embed"].description
+        assert kwargs["allowed_mentions"].users is False
+        # ...it shows which code was mentioned and notifies the owner via inbox/DM
+        assert "OTHER" in kwargs["embed"].description
         assert db["inbox"].count_documents({"user_id": 200, "code": "OTHER"}) == 1
         # unknown code rejected
         interaction2 = make_interaction(member, channel_id=555)

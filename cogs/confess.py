@@ -1227,8 +1227,40 @@ class ConfessCog(commands.Cog):
         except Exception:
             pass
 
+    async def _dm_mention_notice(self, target_user_id, mentioned_code, mentioned_slot,
+                                   from_code, post_number, text, link):
+        """DM the owner of a mentioned code. Never reveals identity in-channel."""
+        if self._nodm_enabled(target_user_id):
+            return
+        user = self.bot.get_user(target_user_id)
+        if user is None:
+            try:
+                user = await self.bot.fetch_user(target_user_id)
+            except Exception:
+                return
+        preview = (text[:180] + "…") if len(text) > 180 else text
+        embed = discord.Embed(
+            title="🔔 One of your codes was mentioned",
+            color=discord.Colour(0xEB459E),
+            description=(
+                f"Code **`{self._slot_code(mentioned_code, mentioned_slot)}`** was mentioned "
+                f"in post **#{post_number}** by code **`{from_code}`**:\n\n{preview}\n\n"
+                f"[Jump to the post]({link})"
+            ),
+        )
+        embed.set_footer(text="Do /dm off to turn off these pings · /inbox to check who pinged you")
+        try:
+            await user.send(embed=embed)
+        except Exception:
+            pass
+
     def _resolve_mentions(self, mention_user_id, mention_code):
-        """Returns (ping_user_ids, mention_code_doc, error_text)."""
+        """Returns (ping_user_ids, mention_code_doc, error_text).
+
+        Only real user mentions (`mention_user`) produce Discord pings.
+        A code mention never pings — it is shown as code text in the embed
+        and the code's owner is notified via DM + inbox instead.
+        """
         ping_ids = []
         if mention_user_id is not None:
             try:
@@ -1242,7 +1274,6 @@ class ConfessCog(commands.Cog):
                 return None, None, f"No code `{mention_code}` to mention."
             if self._is_suspended(mdoc):
                 return None, None, f"Code `{mdoc['code']}` is suspended."
-            ping_ids.append(mdoc["user_id"])
         return list(dict.fromkeys(ping_ids)), mdoc, None
 
     async def post_reply(self, interaction, guild_id, channel_id, original_code, code, text, original_message=None,
@@ -1291,6 +1322,8 @@ class ConfessCog(commands.Cog):
         )
         if ping_ids:
             embed.description += "\n\n" + " ".join(f"<@{uid}>" for uid in ping_ids)
+        if mention_doc is not None:
+            embed.description += f"\n\n🔔 Mention: `{self._slot_code(mention_doc['code'], mention_doc.get('slot'))}`"
         channel = interaction.guild.get_channel(channel_id)
         if channel is None:
             await interaction.response.send_message("That channel no longer exists.")
@@ -1349,6 +1382,10 @@ class ConfessCog(commands.Cog):
                     "text": text,
                     "created_at": datetime.now(timezone.utc),
                 }
+            )
+            await self._dm_mention_notice(
+                mention_doc["user_id"], mention_doc["code"], mention_doc.get("slot"),
+                code, reply_post, text, _jump_link(guild_id, channel_id, sent.id),
             )
         audit(guild_id, interaction.user.id, "secret_reply", "code", code)
         await interaction.response.send_message("Reply posted.", ephemeral=True)
@@ -1416,6 +1453,8 @@ class ConfessCog(commands.Cog):
         embed = build_secret(code, nickname, message, post_number, color=color)
         if ping_ids:
             embed.description += "\n\n" + " ".join(f"<@{uid}>" for uid in ping_ids)
+        if mention_doc is not None:
+            embed.description += f"\n\n🔔 Mention: `{self._slot_code(mention_doc['code'], mention_doc.get('slot'))}`"
         view = SecretReplyView(self, guild_id, channel.id, code)
         try:
             sent = await channel.send(
@@ -1452,6 +1491,10 @@ class ConfessCog(commands.Cog):
                     "text": message,
                     "created_at": datetime.now(timezone.utc),
                 }
+            )
+            await self._dm_mention_notice(
+                mention_doc["user_id"], mention_doc["code"], mention_doc.get("slot"),
+                code, post_number, message, _jump_link(guild_id, channel.id, sent.id),
             )
         settings = get_guild_settings(guild_id)
         if not in_thread and channel.id == settings.get("secret_threads_channel_id"):
