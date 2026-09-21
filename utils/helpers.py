@@ -50,7 +50,7 @@ def format_time(seconds):
 
 def create_embed(title, description, color=discord.Color.blue(), **kwargs):
     embed = discord.Embed(title=title, description=description, color=color, **kwargs)
-    embed.set_footer(text="Jail Bot")
+    embed.set_footer(text="Blue Field")
     return embed
 
 

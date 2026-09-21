@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 from datetime import datetime, timedelta, timezone
 from config import Config
 
@@ -96,6 +97,8 @@ class Database:
         self.devs = None
         self.active_items = None
         self.jail_logs = None
+        self.ar_config = None
+        self.ar_groups = None
 
     async def connect(self):
         if self._connected:
@@ -115,6 +118,7 @@ class Database:
             await mongo_db.active_items.create_index([("guild_id", 1), ("user_id", 1)])
             await mongo_db.active_items.create_index("expires")
             await mongo_db.jail_logs.create_index([("guild_id", 1), ("timestamp", -1)])
+            await mongo_db.ar_groups.create_index("thread_id", unique=True)
 
             self.db = mongo_db
             self.guilds = mongo_db.guilds
@@ -122,6 +126,8 @@ class Database:
             self.devs = mongo_db.devs
             self.active_items = mongo_db.active_items
             self.jail_logs = mongo_db.jail_logs
+            self.ar_config = mongo_db.ar_config
+            self.ar_groups = mongo_db.ar_groups
             print(f"Connected to MongoDB: {Config.MONGO_URI}")
         except Exception as e:
             print(f"MongoDB failed ({e}), using local mongita storage")
@@ -130,7 +136,7 @@ class Database:
             sync_db = sync_client[Config.DB_NAME]
 
             self.db = type("LocalDB", (), {})()
-            for name in ["guilds", "users", "devs", "active_items", "jail_logs"]:
+            for name in ["guilds", "users", "devs", "active_items", "jail_logs", "ar_config", "ar_groups"]:
                 setattr(self.db, name, AsyncCollection(sync_db[name]))
                 setattr(self, name, getattr(self.db, name))
 
@@ -276,6 +282,50 @@ class Database:
     async def cleanup_expired_items(self):
         now = datetime.now(timezone.utc)
         await self.active_items.delete_many({"expires": {"$lte": now}})
+
+    # ---- Autoresponder (global; lives in one storage channel) ----
+
+    async def get_ar_config(self):
+        return await self.ar_config.find_one({"_id": "global"})
+
+    async def set_ar_config(self, data):
+        await self.ar_config.update_one(
+            {"_id": "global"},
+            {"$set": data},
+            upsert=True,
+        )
+
+    async def list_ar_groups(self):
+        # motor's find() returns a cursor synchronously; the mongita
+        # fallback's find() is async — handle both.
+        cursor = self.ar_groups.find({})
+        if inspect.isawaitable(cursor):
+            cursor = await cursor
+        return await cursor.to_list(1000)
+
+    async def get_ar_group_by_thread(self, thread_id):
+        return await self.ar_groups.find_one({"thread_id": thread_id})
+
+    async def get_ar_group_by_name(self, name):
+        # Case-insensitive match done in Python (mongita has no $regex).
+        key = (name or "").strip().casefold()
+        for group in await self.list_ar_groups():
+            if group.get("name", "").strip().casefold() == key:
+                return group
+        return None
+
+    async def insert_ar_group(self, doc):
+        await self.ar_groups.insert_one(doc)
+
+    async def save_ar_group(self, group):
+        doc = {k: v for k, v in group.items() if k != "_id"}
+        await self.ar_groups.update_one(
+            {"thread_id": group["thread_id"]},
+            {"$set": doc},
+        )
+
+    async def delete_ar_group(self, thread_id):
+        await self.ar_groups.delete_one({"thread_id": thread_id})
 
 
 db = Database()

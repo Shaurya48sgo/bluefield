@@ -1,87 +1,51 @@
 # Jail Bot — Discord Bot
 
-`discord.py` + MongoDB (`motor`) with **mongita fallback** (no MongoDB needed). Prefix `I?`.
-
-## Quick start
+`discord.py` + MongoDB (`motor`, async only — no `pymongo`) with mongita-disk fallback. Prefix `I?`. Entrypoint `main.py` (`JailBot`, cogs loaded in `setup_hook`, slash tree synced there).
 
 ```bash
 pip install -r requirements.txt
-python main.py   # dies if DISCORD_TOKEN not in .env
+python main.py   # exits if DISCORD_TOKEN not in .env
 ```
 
-## Important constraints
+No tests, CI, linter, formatter, or typechecker. No README. Manual testing only.
 
-- **No tests, CI, formatter, linter, or typechecker.** Manual testing only.
-- **`motor` async only** — no `pymongo` sync calls.
-- **mongita fallback:** if MongoDB can't be reached, `database.py` wraps `MongitaClientDisk` in `AsyncCollection` adapter.
-- **`.env` required:** `DISCORD_TOKEN`, `MONGO_URI` (default `localhost:27017`), `DB_NAME` (default `jailbot`). `OWNER_ID` optional — fallback: `bot.application_info().owner.id`. `.env` is gitignored.
-- **Prefix commands** are dev/owner only — `utils/checks.py:_base_check` checks owner then guild devs.
-- **Intents required:** `members`, `message_content`, `guilds` (set in `JailBot.__init__`).
-- **`help_command=None`** — no built-in help; all command info is in tables below.
-- **Owner DM on ready:** `on_ready` fetches owner and sends "Bot is online and ready." DM.
-- **Installed skills** in `.agents/skills/` — loaded via `opencode.json` and `skills-lock.json`.
+## Env / config
 
-## Project structure
+- `.env` (gitignored): `DISCORD_TOKEN` (required), `MONGO_URI` (default `mongodb://localhost:27017`), `DB_NAME` (default `jailbot`), `OWNER_ID` (optional; fallback is `application_info().owner`).
+- `config.py`: `PREFIX="I?"`, `SHOP_ITEMS` keys are the canonical item IDs (`silence_2min`, `silence_5min`, `silence_pro_2min`, `silence_pro_5min`, `immunity`, `full_immunity`, `reverse`, `divine_eye`, `invis_pot`), `STARTING_BALANCE=500`.
+- Intents `members` + `message_content` + `guilds` are set in `JailBot.__init__`; privileged ones must also be enabled in the Discord dev portal.
 
-```
-main.py              # Entrypoint — JailBot class, cogs loaded in setup_hook
-config.py            # Bot config, SHOP_ITEMS dict, currency name, STARTING_BALANCE=500
-database.py          # DB CRUD + mongita AsyncCollection adapter
-cogs/
-├── jail.py          # /jail slash command + silence logic + narrative messages
-├── setup.py         # I?jsetup_all (full wizard) & I?jsetup (menu wizard)
-├── shop.py          # /shop, /buy, /inventory, /balance
-├── items.py         # /use (immunity, full_immunity, reverse, divine_eye, invis_pot)
-├── dev.py           # I?dev, I?give, I?givemoney, I?resetuser, I?resetserver
-└── currency.py      # /daily, /pay, /leaderboard, /stats
-utils/
-├── checks.py        # dev_only(), is_owner_or_authorized()
-└── helpers.py       # create_embed, get_role/channel/member_from_mention, etc.
-```
+## Command auth split
 
-## Slash commands (everyone, ephemeral)
-
-| Command | Description |
-|---|---|
-| `/jail user:{@Member} power:{2min\|5min\|2min PRO\|5min PRO}` | Uses inventory item to jail target. Checks immunity/reverse/hierarchy. Public narrative in log channel. |
-| `/use item:{Immunity\|Full Immunity\|Reverse\|Divine Eye\|Invis Pot}` | Activate a defense item (24h duration, Divine Eye is one-time). |
-| `/shop` | Browse purchasable items. |
-| `/buy item:{...} [quantity]` | Buy item(s) with coins. |
-| `/inventory` | View your items. |
-| `/balance` | Check coins. |
-| `/daily` | Claim 100 coins (24h cooldown). |
-| `/pay user:{@Member} amount:{int}` | Transfer coins. |
-| `/leaderboard` | Top 10 richest users. |
-| `/stats` | Times jailed / jails done / items owned. |
-
-## Prefix commands (dev/owner only)
-
-| Command | Description |
-|---|---|
-| `I?jsetup_all` | Full interactive wizard: silence role → log channel → reverse immunity roles (with custom messages) → full immunity roles → role hierarchy. Skip/Skip All buttons on every step. |
-| `I?jsetup [N]` | Menu-based setup. `I?jsetup` shows numbered menu, `I?jsetup 3` jumps to step 3. |
-| `I?dev add @user` / `I?dev remove @user` / `I?dev list` | Manage devs (owner only). |
-| `I?hecker @user -y` / `I?hecker @user -r` | Grant/revoke infinite items (dev/owner only). |
-| `I?give @user item_id [qty]` | Grant items. |
-| `I?givemoney @user amount` | Grant coins. |
-| `I?resetuser @user` | Wipe user data. |
-| `I?resetserver` | Wipe all server data (owner only). |
+- Slash (everyone): `cogs/jail.py` (`/jail`), `cogs/shop.py` (`/shop`, `/buy`, `/inventory`, `/balance`), `cogs/items.py` (`/use`), `cogs/currency.py` (`/daily`, `/pay`, `/leaderboard`, `/stats`).
+- Prefix (dev/owner only via `utils/checks.py:_base_check`): `cogs/setup.py` (`I?jsetup_all` full wizard, `I?jsetup [1-5]` menu/jump, `I?jailconfig` view-only), `cogs/dev.py` (`I?dev`, `I?give`, `I?givemoney`, `I?resetuser`, `I?hecker @user -y|-r`, `I?resetserver` owner-only), `cogs/autoresponder.py` (`I?keysetup`, `I?keymake`, `I?keydelete`, `I?keyword`, `I?keyhint`, `I?keylist`, `I?keyhelp`). `_base_check` order: `OWNER_ID` → `bot.is_owner()` → guild devs; DMs rejected.
+- `on_command_error` in `main.py` swallows `CommandNotFound`.
 
 ## Database
 
-5 collections: `guilds`, `users`, `devs`, `active_items`, `jail_logs`. All CRUD through `database.py` helpers. No direct collection access outside `database.py`.
+- 5 collections: `guilds`, `users`, `devs`, `active_items`, `jail_logs`, plus autoresponder's `ar_config` (single `global` doc: storage guild/channel) and `ar_groups` (unique `thread_id`). Prefer helpers in `database.py`; note `cogs/dev.py` (`resetuser`/`resetserver`) and `cogs/currency.py` (leaderboard) touch collections directly.
+- `database.py:connect()` pings MongoDB, else falls back to `MongitaClientDisk` wrapped in `AsyncCollection` (`asyncio.to_thread`). Mongita path has no TTL/indexes and `find`/`delete_many` are `async` (unlike motor) — `currency.py:86` calls `db.users.find(...)` without `await`, which works on motor but breaks on the fallback. Await new DB calls.
+- Expired protection items are swept by `_cleanup_loop` every 60s (`cleanup_expired_items`).
 
-## Key mechanics
+## Jail resolution order (`cogs/jail.py:execute_jail`)
 
-- **Items are consumed from inventory** — `/buy` first, then `/jail` or `/use`.
-- **"Already silenced"** check is role-based — target has the silence role → blocked.
-- **Immunity** deflects Pro jails back onto the immunity user.
-- **Full Immunity** blocks everything (both Pro and non-Pro).
-- **Reverse** sends non-Pro jails back to attacker; Pro jails jail the reverse user instead.
-- **Role-based immunity** (from setup): reverse immunity roles reflect jail back; full immunity roles block it entirely.
-- **Hierarchy:** lower level needs PRO power to jail a higher level. Levels set via setup wizard.
-- **Invis Pot** hides attacker name as "Someone" in public narrative messages.
-- **Divine Eye** reveals all active protection items server-wide.
-- **Role removal:** per-task `asyncio.sleep(duration*60)` removes silence role after jail expires.
-- **Expired item cleanup:** background loop every 60s.
-- **Public narratives** sent to configured log channel based on jail outcome and power type.
+1. Requires `setup_complete` + silence role configured; cannot jail self or bot; attacker must hold the power item.
+2. **Attacker's power item is consumed even when the jail is blocked/reflected** (`remove_from_inventory` runs on every early return).
+3. Full-immunity role, then `full_immunity` item: blocks everything.
+4. Reverse-immunity role (reflects ALL powers, custom per-role message), then `reverse` item (**non-Pro only**).
+5. `immunity` role/item: blocks non-Pro; **Pro reflects and jails the attacker instead**.
+6. Hierarchy: only if `role_order` set and both users rank in it; `target_rank < author_rank` (lower index = higher rank) is blocked with **no PRO bypass in code**.
+7. Success increments `total_jails_done`/`total_jailed`.
+
+## Gotchas
+
+- `apply_silence` sleeps `asyncio.sleep(duration)` where duration is the minute value (2/5) — effectively seconds. Re-jailing cancels the prior in-memory task (`self.active_jails`); tasks, `active_wizards`, and `menu_listeners` are all lost on restart.
+- `invis_pot` only masks the attacker's mention as "Someone" in the log-channel narrative; ephemeral replies still show names. `divine_eye` is one-time (consumed), others activate 24h via `active_items`.
+- `I?hecker` (infinite items) is only checked in `/use`, not in `/jail` power consumption or `/buy` balance checks.
+
+## Autoresponder (`cogs/autoresponder.py`, pure logic in `utils/ar_logic.py`)
+
+- One storage text channel (`I?keysetup`); one public thread per group (`I?keymake "Name" [duration]` — duration stored only, no behavior). Keywords are managed solely via buttons on the thread control message; responses are thread messages curated by reaction (✅ approved / ❌ rejected / 🟡 hint / 🚩 needs review, latest dev/owner endorsement wins, enforced in `_leave_only` + convergent `on_raw_reaction_remove`).
+- WORD is the default mode (`(?<!\w)/(?!\w)` boundaries, not `\b` — handles `$5.00`-style keywords); CONTAINS is substring; everything case-insensitive. New keywords start OFF (`I?keyword`); hint mode is per-group (`I?keyhint`).
+- Must use **raw** reaction/message events (thread history isn't in cache); ignore the bot's own reactions or the add/remove handlers loop. Threads may be archived — unarchive before writes (`_refresh_control` does). Every intake path shows a visible ack: curation reactions or auto-deleting notes (`_ack`, 6s).
+- Tests: `tests/test_ar_logic.py` (stdlib unittest, no discord needed): `python3 -m unittest discover -s tests -v`.

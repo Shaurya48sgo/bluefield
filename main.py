@@ -38,6 +38,7 @@ class JailBot(commands.Bot):
         await self.load_extension("cogs.currency")
         await self.load_extension("cogs.jail")
         await self.load_extension("cogs.setup")
+        await self.load_extension("cogs.autoresponder")
 
         try:
             synced = await self.tree.sync()
